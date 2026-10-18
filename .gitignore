@@ -1,0 +1,51 @@
+# Node & Package Manager Dependencies
+node_modules/
+package-lock.json.log
+
+# Environment & Secret files
+.env
+.env.*
+!.env.example
+
+# User Uploaded Files & Images (Ignore all uploaded images/files, preserve folder structure via .gitkeep)
+uploads/*
+uploads/**/*
+!uploads/**/
+!uploads/**/.gitkeep
+public/uploads/
+
+# Build, Test & Output Directories
+dist/
+build/
+coverage/
+.nyc_output/
+
+# Custom Script & Temporary Directories
+script/
+scripts/
+scratch/
+tmp/
+temp/
+
+# Log files
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# IDE & OS System Files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# AI Tooling Artifacts
+.gemini/
+.antigravity/
+
+# Documentation & Internal Notes
+*.md
+Server/md/

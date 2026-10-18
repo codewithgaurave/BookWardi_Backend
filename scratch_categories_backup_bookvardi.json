@@ -1,0 +1,190 @@
+[
+  {
+    "_id": "6acc9d3213b78635bd038d46",
+    "name": "School Uniform",
+    "slug": "school-uniform",
+    "description": "School uniforms, readymade apparel, unstitched fabric, winter wear & sports wear",
+    "accentColor": "var(--color-brand-teal)",
+    "bgColor": "var(--color-brand-teal-subtle)",
+    "icon": "Shirt",
+    "imageUrl": "",
+    "gstPercentage": 5,
+    "subCategories": [
+      {
+        "name": "Ready to wear",
+        "slug": "ready-to-wear",
+        "description": "",
+        "itemCount": "",
+        "_id": "6acc9d3213b78635bd038d47"
+      },
+      {
+        "name": "Unstitched",
+        "slug": "unstitched",
+        "description": "",
+        "itemCount": "",
+        "_id": "6acc9d3213b78635bd038d48"
+      },
+      {
+        "name": "Winter wear",
+        "slug": "winter-wear",
+        "description": "",
+        "itemCount": "",
+        "_id": "6acc9d3213b78635bd038d49"
+      },
+      {
+        "name": "Sports Wear",
+        "slug": "sports-wear",
+        "description": "",
+        "itemCount": "",
+        "_id": "6acc9d3213b78635bd038d4a"
+      }
+    ],
+    "productCount": 0,
+    "sortOrder": 1,
+    "__v": 0,
+    "createdAt": "2026-10-12T08:41:22.802Z",
+    "updatedAt": "2026-10-12T08:41:22.802Z"
+  },
+  {
+    "_id": "6acc9d3213b78635bd038d4b",
+    "name": "Books",
+    "slug": "books",
+    "description": "NCERT textbooks, private publisher reference books, practice & olympiad workbooks",
+    "accentColor": "var(--color-brand-teal)",
+    "bgColor": "var(--color-brand-teal-subtle)",
+    "icon": "BookOpen",
+    "imageUrl": "",
+    "gstPercentage": 0,
+    "subCategories": [
+      {
+        "name": "NCERT Books",
+        "slug": "ncert-books",
+        "description": "",
+        "itemCount": "",
+        "_id": "6acc9d3213b78635bd038d4c"
+      },
+      {
+        "name": "Private Publisher Book",
+        "slug": "private-publisher-book",
+        "description": "",
+        "itemCount": "",
+        "_id": "6acc9d3213b78635bd038d4d"
+      },
+      {
+        "name": "Practice & Olympiad Books",
+        "slug": "practice-olympiad-books",
+        "description": "",
+        "itemCount": "",
+        "_id": "6acc9d3213b78635bd038d4e"
+      }
+    ],
+    "productCount": 0,
+    "sortOrder": 2,
+    "__v": 0,
+    "createdAt": "2026-10-12T08:41:22.803Z",
+    "updatedAt": "2026-10-12T08:41:22.803Z"
+  },
+  {
+    "_id": "6acc9d3213b78635bd038d4f",
+    "name": "Notebook & Stationary",
+    "slug": "notebook-stationary",
+    "description": "School notebooks, registers, general stationary supplies, drawing and craft tools",
+    "accentColor": "var(--color-brand-teal)",
+    "bgColor": "var(--color-brand-teal-subtle)",
+    "icon": "Edit3",
+    "imageUrl": "",
+    "gstPercentage": 12,
+    "subCategories": [
+      {
+        "name": "Notebooks and Register",
+        "slug": "notebooks-and-register",
+        "description": "",
+        "itemCount": "",
+        "_id": "6acc9d3213b78635bd038d50"
+      },
+      {
+        "name": "General Stationary",
+        "slug": "general-stationary",
+        "description": "",
+        "itemCount": "",
+        "_id": "6acc9d3213b78635bd038d51"
+      },
+      {
+        "name": "Drawing and supplies",
+        "slug": "drawing-and-supplies",
+        "description": "",
+        "itemCount": "",
+        "_id": "6acc9d3213b78635bd038d52"
+      }
+    ],
+    "productCount": 0,
+    "sortOrder": 3,
+    "__v": 0,
+    "createdAt": "2026-10-12T08:41:22.803Z",
+    "updatedAt": "2026-10-12T08:41:22.803Z"
+  },
+  {
+    "_id": "6acc9d3213b78635bd038d53",
+    "name": "Footwear",
+    "slug": "footwear",
+    "description": "School uniform shoes, socks and athletic footwear",
+    "accentColor": "var(--color-brand-teal)",
+    "bgColor": "var(--color-brand-teal-subtle)",
+    "icon": "Footprints",
+    "imageUrl": "",
+    "gstPercentage": 12,
+    "subCategories": [
+      {
+        "name": "School shoes",
+        "slug": "school-shoes",
+        "description": "",
+        "itemCount": "",
+        "_id": "6acc9d3213b78635bd038d54"
+      },
+      {
+        "name": "School Socks",
+        "slug": "school-socks",
+        "description": "",
+        "itemCount": "",
+        "_id": "6acc9d3213b78635bd038d55"
+      }
+    ],
+    "productCount": 0,
+    "sortOrder": 4,
+    "__v": 0,
+    "createdAt": "2026-10-12T08:41:22.803Z",
+    "updatedAt": "2026-10-12T08:41:22.803Z"
+  },
+  {
+    "_id": "6acc9d3213b78635bd038d56",
+    "name": "School Bags And Kit",
+    "slug": "school-bags-and-kit",
+    "description": "Ergonomic school bags, backpacks, student combos and complete school kits",
+    "accentColor": "var(--color-brand-teal)",
+    "bgColor": "var(--color-brand-teal-subtle)",
+    "icon": "ShoppingBag",
+    "imageUrl": "",
+    "gstPercentage": 18,
+    "subCategories": [
+      {
+        "name": "School Bags",
+        "slug": "school-bags",
+        "description": "",
+        "itemCount": "",
+        "_id": "6acc9d3213b78635bd038d57"
+      },
+      {
+        "name": "Kit and Bundle",
+        "slug": "kit-and-bundle",
+        "description": "",
+        "itemCount": "",
+        "_id": "6acc9d3213b78635bd038d58"
+      }
+    ],
+    "productCount": 0,
+    "sortOrder": 5,
+    "__v": 0,
+    "createdAt": "2026-10-12T08:41:22.803Z",
+    "updatedAt": "2026-10-12T08:41:22.803Z"
+  }
+]
