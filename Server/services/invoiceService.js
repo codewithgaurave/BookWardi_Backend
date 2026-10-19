@@ -601,6 +601,17 @@ export const generateTaxInvoicePDF = (order, filterSellerId = null) => {
     .trim() || "Online / COD";
 
   // 3. PAYMENT & ORDER META DETAILS
+  const activeSellerItemStatus = (
+    itemsToRender.find(i => {
+      const s = String(i.status || '').toLowerCase().trim();
+      return s && !['pending', 'placed', 'unconfirmed', 'draft', ''].includes(s);
+    })?.status ||
+    itemsToRender[0]?.status ||
+    order.overallStatus ||
+    order.status ||
+    "processing"
+  ).replace(/_/g, " ").trim().toUpperCase();
+
   doc
     .fontSize(9)
     .font("Helvetica-Bold")
@@ -614,14 +625,14 @@ export const generateTaxInvoicePDF = (order, filterSellerId = null) => {
     .text(`    Order Status: `, { continued: true })
     .font("Helvetica")
     .fillColor(accentColor)
-    .text((order.overallStatus || "processing").toUpperCase());
+    .text(activeSellerItemStatus);
 
   if (order.razorpayPaymentId) {
     doc.fontSize(8).fillColor(mutedColor).text(`Razorpay Payment ID: ${order.razorpayPaymentId}`, 40, 220);
   }
 
   // Logistics tracking gating: strictly visible when Out for Delivery & partner decided
-  const normStatus = String(order.overallStatus || order.status || "").toLowerCase().replace(/_/g, " ");
+  const normStatus = String(activeSellerItemStatus || order.overallStatus || order.status || "").toLowerCase().replace(/_/g, " ");
   const isOut = normStatus === "out for delivery" || normStatus === "delivered";
   const isSelf = String(order.deliveryMode || order.deliveryType || "").toLowerCase().includes("self") || Boolean(order.selfDeliveryDetails?.deliveryPartnerToken || order.selfDeliveryDetails?.deliveryPersonName);
   const isThirdParty = String(order.deliveryMode || order.deliveryType || "").toLowerCase().includes("third") || Boolean(order.courierName || order.thirdPartyDetails?.courierName);
