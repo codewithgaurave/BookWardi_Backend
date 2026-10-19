@@ -19,8 +19,7 @@ import Seller from "../models/Seller.js";
  * - TDS: 0.1% — लागू TDS की कटौती
  * - GST TCS: 0.5% — जहाँ GST कानून के अनुसार लागू हो
  * - Delivery Charges + 18% GST: डिलीवरी का खर्च और उस पर GST तभी काटें, जब यह खर्च सेलर के जिम्मे हो
- * - Final Seller Settlement: सभी लागू कटौतियों के बाद बची राशि सेलर को दी जाएगी
- * - ₹400 से अधिक के ऑर्डर पर: यदि डिलीवरी का खर्च एडमिन उठाता है, तो सेलर से डिलीवरी चार्ज और उसका GST नहीं काटना है
+ * - ₹301 या अधिक के ऑर्डर पर: यदि डिलीवरी का खर्च एडमिन उठाता है, तो सेलर से डिलीवरी चार्ज और उसका GST नहीं काटना है
  * 
  * Rule 3: COD + Self Delivery (कैश भुगतान + सेलर की डिलीवरी)
  * - ग्राहक पूरा पैसा सीधे सेलर को देगा।
@@ -40,7 +39,7 @@ import Seller from "../models/Seller.js";
  * - GST TCS: 0.5% — जहाँ GST कानून के अनुसार लागू हो।
  * - Delivery Charges + 18% GST: डिलीवरी का खर्च और उस पर GST तभी काटें, जब यह खर्च सेलर के जिम्मे हो।
  * - Final Seller Settlement: सभी लागू कटौतियों के बाद बची राशि सेलर को दी जाएगी।
- * - ₹400 से अधिक के ऑर्डर पर: यदि डिलीवरी का खर्च एडमिन उठाता है, तो सेलर से डिलीवरी चार्ज और उसका GST नहीं काटना है।
+ * - ₹301 या अधिक के ऑर्डर पर: यदि डिलीवरी का खर्च एडमिन उठाता है, तो सेलर से डिलीवरी चार्ज और उसका GST नहीं काटना है।
  */
 
 export const SETTLEMENT_RULES = {
@@ -63,7 +62,7 @@ export const SETTLEMENT_RULES = {
     gstOnCommissionRate: 18,    // 18%
     tdsRate: 0.1,              // 0.1%
     gstTcsRate: 0.5,           // 0.5%
-    freeDeliveryThreshold: 400  // Orders > ₹400 have delivery charges absorbed by Admin
+    freeDeliveryThreshold: 301  // Orders >= ₹301 have delivery charges absorbed by Admin
   },
   COD_SELF_DELIVERY: {
     code: "COD_SELF_DELIVERY",
@@ -85,7 +84,7 @@ export const SETTLEMENT_RULES = {
     gstOnCommissionRate: 18,    // 18%
     tdsRate: 0.1,              // 0.1%
     gstTcsRate: 0.5,           // 0.5% (लागू कानून के अनुसार जब कूरियर पोर्टल को भुगतान करता है)
-    freeDeliveryThreshold: 400, // Orders > ₹400 have delivery charges absorbed by Admin
+    freeDeliveryThreshold: 301, // Orders >= ₹301 have delivery charges absorbed by Admin
     isSellerCollectedCash: false // Courier remits collected cash to Portal
   }
 };
@@ -187,7 +186,8 @@ export function calculateSellerSettlement(grossSale, options = {}) {
       igstTcsRate: 0,
       igstTcsAmount: 0,
       // Delivery charges waived
-      isAbove400: gross > 400,
+      isAbove400: gross >= 301,
+      isAboveThreshold: gross >= 301,
       deliveryChargeBorneBy: "none",
       deliveryChargeAmount: 0,
       gstOnDeliveryRate: 0,
@@ -331,28 +331,35 @@ export function calculateSellerSettlement(grossSale, options = {}) {
   const tdsAmount = Math.round(((gross * tdsRate) / 100) * 100) / 100;
 
   // 5. Delivery Charges + 18% GST (Rule 2 & Rule 4: Third-Party Delivery)
-  // "₹400 से कम के ऑर्डर पर पोर्टल की डिलीवरी नीति के अनुसार चार्ज लागू होंगे।"
-  // "₹400 से अधिक के ऑर्डर पर डिलीवरी का खर्च एडमिन उठाएगा, तो सेलर से यह खर्च नहीं काटना है।"
+  // "₹301 से कम के ऑर्डर पर पोर्टल की डिलीवरी नीति के अनुसार चार्ज लागू होंगे।"
+  // "₹301 या अधिक के ऑर्डर पर डिलीवरी का खर्च एडमिन उठाएगा, तो सेलर से यह खर्च नहीं काटना है।"
   const totalOrderValue = Number(options.orderTotal || options.totalAmount || gross);
-  const isAbove400 = totalOrderValue > 400;
-  const adminBearsDeliveryAbove400 = options.adminBearsDeliveryAbove400 !== false;
+  const freeDeliveryThreshold = Number(
+    options.freeDeliveryThreshold ?? 
+    options.minOrderFreeShipping ?? 
+    options.freeShippingThreshold ?? 
+    301
+  );
+  const isAboveThreshold = totalOrderValue >= freeDeliveryThreshold;
+  const isAbove400 = isAboveThreshold; // Backward compatibility alias
+  const adminBearsDeliveryAbove400 = options.adminBearsDeliveryAbove400 !== false && isAboveThreshold;
 
   let deliveryChargeBorneBy = options.deliveryChargeBorneBy;
   if (!deliveryChargeBorneBy) {
-    if (isAbove400 && adminBearsDeliveryAbove400) {
+    if (isAboveThreshold && (options.adminBearsDeliveryAbove400 !== false)) {
       deliveryChargeBorneBy = "admin";
     } else if (options.isDeliveryBorneBySeller || options.deliveryBorneBy === "seller") {
       deliveryChargeBorneBy = "seller";
     } else if (Number(options.shippingFee || options.shippingAmount || 0) > 0) {
       deliveryChargeBorneBy = "customer";
     } else {
-      // For third-party courier delivery <= 400 where shipping is not charged to customer, seller bears delivery
+      // For third-party courier delivery < 301 where shipping is not charged to customer, seller bears delivery
       deliveryChargeBorneBy = isThirdParty ? "seller" : "admin";
     }
   }
 
-  // If order is > ₹400 and admin absorbs it, seller is never deducted for delivery
-  const isDeliveryExemptedForSeller = isAbove400 && adminBearsDeliveryAbove400;
+  // If order is >= ₹301 and admin absorbs it, seller is never deducted for delivery
+  const isDeliveryExemptedForSeller = isAboveThreshold && (options.adminBearsDeliveryAbove400 !== false);
 
   let deliveryChargeAmount = 0;
   // Product GST rate is the default GST rate for delivery (Composite Supply under Section 8 of CGST Act)
@@ -424,8 +431,10 @@ export function calculateSellerSettlement(grossSale, options = {}) {
     sgstTcsAmount,
     igstTcsRate,
     igstTcsAmount,
-    // Delivery charges breakdown (Rule 2 & 4: ₹400 policy)
+    // Delivery charges breakdown (Rule 2 & 4: ₹301 policy)
     isAbove400,
+    isAboveThreshold,
+    freeDeliveryThreshold,
     deliveryChargeBorneBy,
     deliveryChargeAmount,
     gstOnDeliveryRate,

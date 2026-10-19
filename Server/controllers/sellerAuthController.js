@@ -1,5 +1,6 @@
 import mongoose from "mongoose";
 import Seller from "../models/Seller.js";
+import User from "../models/User.js";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import { upsertFcmToken } from "../utils/fcmHelper.js";
@@ -56,15 +57,41 @@ export const saveBase64ToFile = (dataUrl, folder = "documents", fieldName = "doc
 // Seller Registration (with KYC Document Uploads, Location & Delivery Preferences)
 export const registerSeller = async (req, res) => {
   try {
-    const name = req.body.name || req.body.sellerName || req.body.ownerFullName;
-    const storeName = req.body.storeName || req.body.tradeName || req.body.legalBusinessName;
-    const email = req.body.email || req.body.sellerEmail;
-    const phone = req.body.phone || req.body.sellerPhone;
+    const rawPhone = String(req.body.phone || req.body.sellerPhone || "").trim();
+    const cleanDigits = rawPhone.replace(/\D/g, "");
+    const digits10 = cleanDigits.slice(-10);
+    const phone = rawPhone || (digits10 ? `+91 ${digits10}` : "");
+
+    // Check if user exists in User collection to auto-populate any missing fields
+    let existingUser = null;
+    if (digits10 || req.body.email || req.body.sellerEmail) {
+      try {
+        existingUser = await User.findOne({
+          $or: [
+            ...(digits10 ? [
+              { phone: { $regex: digits10 } }
+            ] : []),
+            ...(req.body.email || req.body.sellerEmail ? [
+              { email: String(req.body.email || req.body.sellerEmail).toLowerCase().trim() }
+            ] : [])
+          ]
+        });
+      } catch (uErr) {
+        console.warn("User lookup error during seller registration:", uErr.message);
+      }
+    }
+
+    const defaultAddress = existingUser?.addresses?.[0] || {};
+    const fallbackAddr = [defaultAddress.addressLine, defaultAddress.street, defaultAddress.landmark].filter(Boolean).join(", ");
+
+    const name = String(req.body.name || req.body.sellerName || req.body.ownerFullName || existingUser?.name || "Partner Merchant").trim();
+    const storeName = String(req.body.storeName || req.body.tradeName || req.body.legalBusinessName || `${name}'s Vardi Store`).trim();
+    const email = String(req.body.email || req.body.sellerEmail || existingUser?.email || (digits10 ? `seller_${digits10}@bookvardi.in` : "")).toLowerCase().trim();
     const password = req.body.password || "BookVardiSeller@123";
-    const address = req.body.address || req.body.addressLine1 || `${req.body.addressLine1 || ''} ${req.body.addressLine2 || ''}`.trim();
-    const city = req.body.city;
-    const state = req.body.state || "Uttar Pradesh";
-    const pincode = req.body.pincode;
+    const address = String(req.body.address || req.body.addressLine1 || req.body.registeredAddress || fallbackAddr || `${defaultAddress.city || 'Mirzapur'}, Uttar Pradesh`).trim();
+    const city = String(req.body.city || defaultAddress.city || "Mirzapur").trim();
+    const state = String(req.body.state || defaultAddress.state || "Uttar Pradesh").trim();
+    const pincode = String(req.body.pincode || defaultAddress.pincode || "231301").trim();
     const gstNumber = req.body.gstNumber || req.body.gstin || "";
     const msmeRegistrationNumber = req.body.msmeRegistrationNumber || req.body.msmeNumber || req.body.msme || "";
     const cinNumber = req.body.cinNumber || req.body.cinRegistration || req.body.cin || "";
@@ -77,7 +104,7 @@ export const registerSeller = async (req, res) => {
     const panNumber = req.body.panNumber || req.body.ownerPan || req.body.businessPan || "";
     const yearStarted = req.body.yearStarted || "";
 
-    // Validate required fields
+    // Validate required fields (with fallback guarantee)
     if (!name || !storeName || !email || !phone || !address || !city || !state || !pincode) {
       return res.status(400).json({
         message: "Please fill all required personal, store, and address fields."
@@ -93,9 +120,19 @@ export const registerSeller = async (req, res) => {
     const addressProofDoc = files.addressProofDoc?.[0] ? `/uploads/documents/${files.addressProofDoc[0].filename}` : saveBase64ToFile(req.body.addressProofDoc, "documents", "addressProof");
     const profilePhoto = files.profilePhoto?.[0] ? `/uploads/documents/${files.profilePhoto[0].filename}` : (files.avatar?.[0] ? `/uploads/avatars/${files.avatar[0].filename}` : saveBase64ToFile(req.body.profilePhoto || req.body.avatar, "avatars", "profilePhoto"));
 
-    // Check if seller email or phone already exists
+    // Check if seller email or phone already exists (matching any standard format)
     const existingSeller = await Seller.findOne({
-      $or: [{ email: email.toLowerCase() }, { phone }]
+      $or: [
+        { email: email.toLowerCase() },
+        { phone },
+        ...(digits10 ? [
+          { phone: cleanDigits },
+          { phone: digits10 },
+          { phone: `+91${digits10}` },
+          { phone: `+91 ${digits10}` },
+          { phone: { $regex: digits10 } }
+        ] : [])
+      ]
     });
 
     const ownerDetailsObj = {
@@ -175,6 +212,24 @@ export const registerSeller = async (req, res) => {
         profilePhoto: profilePhoto || existingSeller.documents?.profilePhoto || ""
       };
       await existingSeller.save();
+
+      // Synchronize User.sellerStatus to pending
+      if (digits10 || email) {
+        try {
+          await User.updateMany(
+            {
+              $or: [
+                ...(digits10 ? [{ phone: { $regex: digits10 } }] : []),
+                { email: email.toLowerCase() }
+              ]
+            },
+            { $set: { sellerStatus: "pending" } }
+          );
+        } catch (uErr) {
+          console.warn("User sellerStatus sync error on update:", uErr.message);
+        }
+      }
+
       return res.status(200).json({
         message: "Seller application updated successfully! Pending Admin review.",
         sellerId: existingSeller._id,
@@ -261,6 +316,23 @@ export const registerSeller = async (req, res) => {
     });
 
     await newSeller.save();
+
+    // Synchronize User.sellerStatus to pending
+    if (digits10 || email) {
+      try {
+        await User.updateMany(
+          {
+            $or: [
+              ...(digits10 ? [{ phone: { $regex: digits10 } }] : []),
+              { email: email.toLowerCase() }
+            ]
+          },
+          { $set: { sellerStatus: "pending" } }
+        );
+      } catch (uErr) {
+        console.warn("User sellerStatus sync error on register:", uErr.message);
+      }
+    }
 
     res.status(201).json({
       message: "Seller registered successfully! Your account is currently pending Admin review and approval.",

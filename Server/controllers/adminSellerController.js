@@ -342,6 +342,56 @@ export const updateSellerCommission = async (req, res) => {
     seller.commissionPercentage = rate;
     await seller.save();
 
+    // Propagate updated commission to seller's orders in database
+    try {
+      await Order.updateMany(
+        {
+          $or: [
+            { sellerId: seller._id },
+            { "items.sellerId": seller._id },
+            { "sellerDetails.sellerId": seller._id },
+            { "items.sellerName": seller.storeName },
+            { "items.storeName": seller.storeName },
+            { sellerStoreName: seller.storeName },
+            { storeName: seller.storeName }
+          ]
+        },
+        {
+          $set: {
+            commissionRate: rate,
+            sellerCommissionRate: rate,
+            commissionPercentage: rate,
+            "sellerDetails.commissionRate": rate,
+            "sellerDetails.commissionPercentage": rate,
+            "items.$[elem].commissionRate": rate,
+            "items.$[elem].sellerCommissionRate": rate,
+            "items.$[elem].commissionPercentage": rate,
+            "items.$[elem].sellerDetails.commissionRate": rate,
+            "items.$[elem].sellerDetails.commissionPercentage": rate
+          }
+        },
+        {
+          arrayFilters: [
+            {
+              $or: [
+                { "elem.sellerId": { $in: [seller._id, seller._id.toString()] } },
+                { "elem.sellerName": seller.storeName },
+                { "elem.storeName": seller.storeName },
+                { "elem.sellerStoreName": seller.storeName }
+              ]
+            }
+          ]
+        }
+      );
+    } catch (ordUpdateErr) {
+      console.warn("Order commission update warning:", ordUpdateErr.message);
+    }
+
+    try {
+      const { invalidateOrdersCache } = await import("./orderController.js");
+      invalidateOrdersCache();
+    } catch (cacheErr) {}
+
     res.json({
       message: `Commission rate for '${seller.storeName}' updated to ${rate}%.`,
       seller: {
@@ -459,7 +509,7 @@ export const downloadSellerFinancialStatement = async (req, res) => {
         sellerState,
         customerState,
         deliveryCharge: o.shippingAmount || o.deliveryCharge || 40,
-        deliveryChargeBorneBy: o.deliveryChargeBorneBy || (ordTotalVal > 400 ? 'admin' : (Number(o.shippingAmount || 0) > 0 ? 'customer' : 'seller'))
+        deliveryChargeBorneBy: o.deliveryChargeBorneBy || (ordTotalVal >= 301 ? 'admin' : (Number(o.shippingAmount || 0) > 0 ? 'customer' : 'seller'))
       });
 
       if (!isCancelled) {

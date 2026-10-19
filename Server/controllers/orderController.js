@@ -37,6 +37,8 @@ const META_CACHE_TTL_MS = 120 * 1000; // 2 minutes
 export const invalidateOrdersCache = () => {
   adminOrdersCache = null;
   adminOrdersCacheTime = 0;
+  sellerMetaCache.clear();
+  productMetaCache.clear();
   if (global.__invalidateSellerOrdersCache) {
     try {
       global.__invalidateSellerOrdersCache();
@@ -330,6 +332,7 @@ export const isPlaceholderSeller = (str) => {
   const s = str.trim().toLowerCase();
   return (
     s === '' ||
+    s.includes(',') || // Multi-seller / composite strings are not a single valid store name
     s === 'bookvardi verified seller hub' ||
     s === 'bookvardi verified seller' ||
     s === 'bookvardimerchant' ||
@@ -557,7 +560,9 @@ export const enrichOrdersWithSellerAndConsumer = async (orders) => {
         city: s.city || "",
         state: s.state || "",
         pincode: s.pincode || "",
-        gstNumber: s.gstNumber || ""
+        gstNumber: s.gstNumber || "",
+        commissionRate: s.commissionRate ?? s.commissionPercentage ?? 10,
+        commissionPercentage: s.commissionPercentage ?? s.commissionRate ?? 10
       };
       sellerMap.set(s._id.toString(), formatted);
       sellerMetaCache.set(s._id.toString(), { data: formatted, timestamp: now });
@@ -590,7 +595,9 @@ export const enrichOrdersWithSellerAndConsumer = async (orders) => {
           city: u.city || "",
           state: u.state || "",
           pincode: u.pincode || "",
-          gstNumber: ""
+          gstNumber: "",
+          commissionRate: u.commissionRate ?? u.commissionPercentage ?? 10,
+          commissionPercentage: u.commissionPercentage ?? u.commissionRate ?? 10
         });
       });
     }
@@ -610,7 +617,9 @@ export const enrichOrdersWithSellerAndConsumer = async (orders) => {
           city: s.city || "",
           state: s.state || "",
           pincode: s.pincode || "",
-          gstNumber: s.gstNumber || ""
+          gstNumber: s.gstNumber || "",
+          commissionRate: s.commissionRate ?? s.commissionPercentage ?? 10,
+          commissionPercentage: s.commissionPercentage ?? s.commissionRate ?? 10
         });
       });
     }
@@ -661,8 +670,9 @@ export const enrichOrdersWithSellerAndConsumer = async (orders) => {
       ord.customerPhone = realPhone;
       ord.customerEmail = realEmail;
 
-      // 2. Resolve Seller Details
+      // 2. Resolve Seller Details (prioritizing sellers of confirmed items)
       let primarySellerDetails = null;
+      let primarySellerIsConfirmed = false;
 
       (ord.items || []).forEach(item => {
         const sId = item.sellerId ? (item.sellerId._id ? item.sellerId._id.toString() : item.sellerId.toString()) : null;
@@ -745,6 +755,9 @@ export const enrichOrdersWithSellerAndConsumer = async (orders) => {
             }
           }
 
+        const itemStatusStr = String(item.status || ord.status || ord.overallStatus || '').toLowerCase().trim();
+        const isItemConfirmed = itemStatusStr && !['pending', 'placed', 'unconfirmed', 'draft', ''].includes(itemStatusStr);
+
         if (matchedSeller) {
           item.sellerId = matchedSeller;
           item.sellerName = matchedSeller.storeName || matchedSeller.name;
@@ -756,18 +769,30 @@ export const enrichOrdersWithSellerAndConsumer = async (orders) => {
           item.sellerCity = matchedSeller.city;
           item.sellerState = matchedSeller.state;
           item.sellerDetails = matchedSeller;
-          if (!primarySellerDetails) primarySellerDetails = matchedSeller;
+          if (matchedSeller.commissionRate !== undefined && matchedSeller.commissionRate !== null) {
+            item.commissionRate = matchedSeller.commissionRate;
+            item.sellerCommissionRate = matchedSeller.commissionRate;
+            item.commissionPercentage = matchedSeller.commissionRate;
+          }
+          if (!primarySellerDetails || (!primarySellerIsConfirmed && isItemConfirmed)) {
+            primarySellerDetails = matchedSeller;
+            if (isItemConfirmed) primarySellerIsConfirmed = true;
+          }
         } else if (item.sellerDetails && !isPlaceholderSeller(item.sellerDetails.storeName)) {
-          if (!primarySellerDetails) primarySellerDetails = item.sellerDetails;
+          if (!primarySellerDetails || (!primarySellerIsConfirmed && isItemConfirmed)) {
+            primarySellerDetails = item.sellerDetails;
+            if (isItemConfirmed) primarySellerIsConfirmed = true;
+          }
         } else if (!isPlaceholderSeller(item.sellerStoreName || item.sellerName || item.storeName)) {
           const sName = item.sellerStoreName || item.sellerName || item.storeName;
-          if (!primarySellerDetails) {
+          if (!primarySellerDetails || (!primarySellerIsConfirmed && isItemConfirmed)) {
             primarySellerDetails = {
               storeName: sName,
               sellerName: sName,
               phone: item.sellerPhone || "",
               city: item.sellerCity || ""
             };
+            if (isItemConfirmed) primarySellerIsConfirmed = true;
           }
         }
       });
@@ -785,6 +810,11 @@ export const enrichOrdersWithSellerAndConsumer = async (orders) => {
         ord.sellerName = primarySellerDetails.storeName || primarySellerDetails.sellerName;
         ord.sellerStoreName = primarySellerDetails.storeName || primarySellerDetails.sellerName;
         ord.storeName = primarySellerDetails.storeName || primarySellerDetails.sellerName;
+        if (primarySellerDetails.commissionRate !== undefined && primarySellerDetails.commissionRate !== null) {
+          ord.commissionRate = primarySellerDetails.commissionRate;
+          ord.sellerCommissionRate = primarySellerDetails.commissionRate;
+          ord.commissionPercentage = primarySellerDetails.commissionRate;
+        }
         ord.sellerPhone = primarySellerDetails.phone || ord.sellerPhone || "";
         ord.sellerCity = primarySellerDetails.city || ord.sellerCity || "";
         ord.sellerState = primarySellerDetails.state || ord.sellerState || "";
@@ -2871,31 +2901,51 @@ export const downloadInvoice = async (req, res) => {
       const fDigits = fStr.replace(/\D/g, "");
       itemsToCheck = itemsToCheck.filter((item) => {
         const sId = String(item.sellerId?._id || item.sellerId || item.sellerDetails?.sellerId || "").toLowerCase().trim();
-        const sStore = String(item.storeName || item.sellerName || item.sellerDetails?.storeName || "").toLowerCase().trim();
+        const sStore = String(
+          item.sellerStoreName ||
+          item.storeName ||
+          item.sellerName ||
+          item.sellerDetails?.storeName ||
+          item.sellerDetails?.sellerName ||
+          (typeof item.seller === 'string' ? item.seller : item.seller?.storeName) ||
+          ""
+        ).toLowerCase().trim();
         const sPhone = String(item.sellerPhone || item.sellerDetails?.phone || "").replace(/\D/g, "");
-        return (
+        const matched = (
           sId === fStr ||
-          sStore === fStr ||
-          (fStr.length >= 8 && sId.endsWith(fStr.slice(-10))) ||
-          (fDigits.length >= 10 && sPhone.endsWith(fDigits.slice(-10)))
+          (sStore && (sStore === fStr || sStore.includes(fStr) || fStr.includes(sStore))) ||
+          (fStr.length >= 8 && sId && (sId.endsWith(fStr.slice(-10)) || fStr.endsWith(sId.slice(-10)))) ||
+          (fDigits.length >= 10 && sPhone && (sPhone.endsWith(fDigits.slice(-10)) || fDigits.endsWith(sPhone.slice(-10))))
         );
+        return matched;
       });
     }
 
-    // STRICT PRODUCT & ORDER CONFIRMATION CHECK: Do not generate invoice when product status or order status is pending
-    const isPending = !orderStatusVal || orderStatusVal === "pending" || orderStatusVal === "unconfirmed" || orderStatusVal === "placed";
-    const isPaid = String(enrichedOrder.paymentStatus || "").toLowerCase() === "paid" || Number(enrichedOrder.advancePaidAmount || 0) > 0;
+    // STRICT PRODUCT & ORDER CONFIRMATION CHECK:
+    // If order or seller's items have confirmed items, allow invoice generation for that seller
+    const hasConfirmedItem = itemsToCheck.length > 0 && itemsToCheck.some((it) => {
+      const itSt = String(it.status || '').toLowerCase().trim();
+      return itSt && !['pending', 'placed', 'unconfirmed', 'draft', ''].includes(itSt);
+    });
+
     const isConfirmedAndOnward = [
       "assigned", "accepted", "confirmed", "processing", "production", "packed", "shipped",
       "dispatched", "in_transit", "out_for_delivery", "delivered", "completed", "fulfilled",
       "return_requested", "returned", "exchange_requested", "exchanged", "refunded", "cancelled"
     ].includes(orderStatusVal);
 
-    const isStrictlyPending = !isConfirmedAndOnward && !isPaid && isPending;
-    if (isStrictlyPending) {
-      return res.status(400).json({
-        message: `Tax Invoice cannot be generated while product or order status is pending. Current status: '${enrichedOrder.overallStatus || enrichedOrder.status || "Pending"}'. Invoice will be available once the order and products are confirmed.`
-      });
+    if (filterSellerId) {
+      if (!hasConfirmedItem) {
+        return res.status(400).json({
+          message: `Tax Invoice cannot be generated while products for this seller are pending confirmation. Items must be confirmed before generating an invoice.`
+        });
+      }
+    } else {
+      if (!hasConfirmedItem && !isConfirmedAndOnward) {
+        return res.status(400).json({
+          message: `Tax Invoice cannot be generated while products are pending confirmation. Current status: '${enrichedOrder.overallStatus || enrichedOrder.status || "Pending"}'. Items must be confirmed before generating an invoice.`
+        });
+      }
     }
 
     const filename = filterSellerId
