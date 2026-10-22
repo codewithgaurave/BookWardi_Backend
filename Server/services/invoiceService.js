@@ -761,19 +761,36 @@ export const generateTaxInvoicePDF = (order, filterSellerId = null, options = {}
 
   const isProductSpecificCoupon = Boolean(
     order.couponDetails?.applicableScope === 'specific_product' ||
-    (Array.isArray(order.couponDetails?.applicableProducts) && order.couponDetails.applicableProducts.length > 0)
+    order.couponDetails?.applicableScope === 'specific_kit' ||
+    order.couponDetails?.specificProductId ||
+    order.couponDetails?.specificKitId ||
+    order.couponDetails?.specificProductName ||
+    order.couponDetails?.specificKitTitle ||
+    (Array.isArray(order.couponDetails?.applicableProducts) && order.couponDetails.applicableProducts.length > 0) ||
+    (Array.isArray(order.couponDetails?.applicableKits) && order.couponDetails.applicableKits.length > 0)
   );
 
   const eligibleProductIds = new Set(
-    (order.couponDetails?.applicableProducts || [order.couponDetails?.specificProductId])
+    (order.couponDetails?.applicableProducts || [])
+      .concat(order.couponDetails?.specificProductId ? [order.couponDetails.specificProductId] : [])
+      .concat(order.couponDetails?.applicableKits || [])
+      .concat(order.couponDetails?.specificKitId ? [order.couponDetails.specificKitId] : [])
       .filter(Boolean)
-      .map(id => String(id))
+      .map(id => String(id).toLowerCase().trim())
   );
+  const specProdName = String(order.couponDetails?.specificProductName || '').toLowerCase().trim();
+  const specKitTitle = String(order.couponDetails?.specificKitTitle || '').toLowerCase().trim();
 
-  const currentSellerHasEligibleProducts = !isProductSpecificCoupon || itemsToRender.some(it => {
-    const pId = String(it.productId || it.id || it._id || '');
-    return eligibleProductIds.has(pId);
-  });
+  const isItemEligibleForCoupon = (it) => {
+    if (!isProductSpecificCoupon) return true;
+    const itCandIds = [it.productId, it.id, it._id, it.customId].filter(Boolean).map(id => String(id).toLowerCase().trim());
+    const isIdMatch = itCandIds.some(id => eligibleProductIds.has(id));
+    const itNameLower = String(it.name || '').toLowerCase();
+    const isNameMatch = Boolean((specProdName && itNameLower.includes(specProdName)) || (specKitTitle && itNameLower.includes(specKitTitle)));
+    return isIdMatch || isNameMatch;
+  };
+
+  const currentSellerHasEligibleProducts = itemsToRender.some(isItemEligibleForCoupon);
 
   const sellerItemsDiscountSum = itemsToRender.reduce(
     (sum, it) => sum + (Number(it.offerDiscount || it.discount) || (Number(it.finalPrice) > 0 && Number(it.price) > Number(it.finalPrice) ? Math.round((Number(it.price) - Number(it.finalPrice)) * Number(it.quantity || 1) * 100) / 100 : 0)),
@@ -863,7 +880,7 @@ export const generateTaxInvoicePDF = (order, filterSellerId = null, options = {}
       if (itemDiscount === 0 && Number(item.finalPrice) > 0 && Number(item.price) > Number(item.finalPrice)) {
         itemDiscount = Math.round((Number(item.price) - Number(item.finalPrice)) * rawQty * 100) / 100;
       }
-    } else if (discountRatio > 0 && (!isProductSpecificCoupon || eligibleProductIds.has(String(item.productId || item.id || item._id || '')))) {
+    } else if (discountRatio > 0 && isItemEligibleForCoupon(item)) {
       const isLast = index === itemsToRender.length - 1;
       itemDiscount = isLast
         ? Math.max(0, Math.round((totalDiscounts - runningProratedDiscount) * 100) / 100)

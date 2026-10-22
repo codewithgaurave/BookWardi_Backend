@@ -1532,66 +1532,84 @@ export const createOrder = async (req, res) => {
     const totalDiscount = Number(discount || discountAmount || 0);
     const existingItemsDiscount = orderItems.reduce((sum, it) => sum + (Number(it.offerDiscount || it.discount) || 0), 0);
 
-    // If total discount exists but items don't have individual offerDiscount, resolve coupon to target item(s)
-    if (existingItemsDiscount <= 0 && totalDiscount > 0 && appliedCouponCode) {
+    // If coupon code exists, resolve coupon model to ensure couponDetails is persisted
+    let matchedCoupon = null;
+    if (appliedCouponCode) {
       try {
-        let matchedCoupon = await Coupon.findOne({ code: appliedCouponCode }).lean();
+        matchedCoupon = await Coupon.findOne({ code: appliedCouponCode }).lean();
         if (!matchedCoupon) {
           matchedCoupon = await SellerOffer.findOne({ code: appliedCouponCode }).lean();
         }
+      } catch (e) {
+        console.warn("⚠️ Coupon lookup warning:", e.message);
+      }
+    }
 
-        if (matchedCoupon) {
-          const extractId = (val) => {
-            if (!val) return null;
-            if (typeof val === 'object') return String(val._id || val.id || '').toLowerCase().trim();
-            return String(val).toLowerCase().trim();
-          };
+    // If total discount exists but items don't have individual offerDiscount, resolve coupon to target item(s)
+    if (existingItemsDiscount <= 0 && totalDiscount > 0 && appliedCouponCode && matchedCoupon) {
+      try {
+        const extractId = (val) => {
+          if (!val) return null;
+          if (typeof val === 'object') return String(val._id || val.id || '').toLowerCase().trim();
+          return String(val).toLowerCase().trim();
+        };
 
-          const targetSellerId = extractId(matchedCoupon.sellerId) || extractId(matchedCoupon.storeId);
-          const isSellerScoped = Boolean(matchedCoupon.createdRole === 'seller' || targetSellerId);
-          const specificProdId = extractId(matchedCoupon.specificProductId);
-          const specificKitId = extractId(matchedCoupon.specificKitId);
-          const applicableProds = (matchedCoupon.applicableProducts || []).map(extractId).filter(Boolean);
-          const applicableKits = (matchedCoupon.applicableKits || []).map(extractId).filter(Boolean);
+        const targetSellerId = extractId(matchedCoupon.sellerId) || extractId(matchedCoupon.storeId);
+        const isSellerScoped = Boolean(matchedCoupon.createdRole === 'seller' || targetSellerId);
+        const specificProdId = extractId(matchedCoupon.specificProductId);
+        const specificKitId = extractId(matchedCoupon.specificKitId);
+        const specificProdName = String(matchedCoupon.specificProductName || '').toLowerCase().trim();
+        const specificKitName = String(matchedCoupon.specificKitTitle || '').toLowerCase().trim();
+        const applicableProds = (matchedCoupon.applicableProducts || []).map(extractId).filter(Boolean);
+        const applicableKits = (matchedCoupon.applicableKits || []).map(extractId).filter(Boolean);
 
-          const isProductSpecificCoupon = Boolean(
-            specificProdId ||
-            specificKitId ||
-            applicableProds.length > 0 ||
-            applicableKits.length > 0 ||
-            matchedCoupon.applicableScope === 'specific_product' ||
-            matchedCoupon.applicableScope === 'specific_kit'
-          );
+        const isProductSpecificCoupon = Boolean(
+          specificProdId ||
+          specificKitId ||
+          specificProdName ||
+          specificKitName ||
+          applicableProds.length > 0 ||
+          applicableKits.length > 0 ||
+          matchedCoupon.applicableScope === 'specific_product' ||
+          matchedCoupon.applicableScope === 'specific_kit'
+        );
 
-          const eligibleItems = orderItems.filter((item) => {
-            const itemSellerId = extractId(item.sellerId || item.sellerDetails?.sellerId);
-            const itemCandidates = [
-              extractId(item.productId),
-              extractId(item.id),
-              extractId(item._id),
-              extractId(item.customId)
-            ].filter(Boolean);
+        const eligibleItems = orderItems.filter((item) => {
+          const itemSellerId = extractId(item.sellerId || item.sellerDetails?.sellerId);
+          const itemCandidates = [
+            extractId(item.productId),
+            extractId(item.id),
+            extractId(item._id),
+            extractId(item.customId)
+          ].filter(Boolean);
+          const itemNameLower = String(item.name || '').toLowerCase();
 
-            if (isSellerScoped && targetSellerId && itemSellerId && itemSellerId !== targetSellerId) {
-              return false;
-            }
-            if (specificProdId) {
-              return itemCandidates.includes(specificProdId);
-            }
-            if (applicableProds.length > 0) {
-              return applicableProds.some(p => itemCandidates.includes(p));
-            }
-            if (specificKitId) {
-              return itemCandidates.includes(specificKitId);
-            }
-            if (applicableKits.length > 0) {
-              return applicableKits.some(k => itemCandidates.includes(k));
-            }
-            if (isProductSpecificCoupon) {
-              return false;
-            }
+          if (isSellerScoped && targetSellerId && itemSellerId && itemSellerId !== targetSellerId) {
+            return false;
+          }
+          if (specificProdId && itemCandidates.includes(specificProdId)) {
             return true;
-          });
+          }
+          if (applicableProds.length > 0 && applicableProds.some(p => itemCandidates.includes(p))) {
+            return true;
+          }
+          if (specificProdName && itemNameLower.includes(specificProdName)) {
+            return true;
+          }
+          if (specificKitId && itemCandidates.includes(specificKitId)) {
+            return true;
+          }
+          if (applicableKits.length > 0 && applicableKits.some(k => itemCandidates.includes(k))) {
+            return true;
+          }
+          if (specificKitName && itemNameLower.includes(specificKitName)) {
+            return true;
+          }
+          if (isProductSpecificCoupon) {
+            return false;
+          }
+          return true;
+        });
 
           if (eligibleItems.length > 0) {
             const eligibleSubtotal = eligibleItems.reduce(
@@ -1627,11 +1645,10 @@ export const createOrder = async (req, res) => {
               }
             });
           }
+        } catch (e) {
+          console.warn("⚠️ Coupon auto-allocation warning:", e.message);
         }
-      } catch (e) {
-        console.warn("⚠️ Coupon auto-allocation warning:", e.message);
       }
-    }
 
     // Fetch dynamic platform logistics settings for free delivery threshold
     let dynamicThreshold = 401;
@@ -1805,7 +1822,7 @@ export const createOrder = async (req, res) => {
       discountAmount: discountAmount || discount || totalDiscount || 0,
       appliedCoupon: appliedCouponCode || "",
       couponCode: appliedCouponCode || "",
-      couponDetails: req.body.couponDetails || req.body.coupon || null,
+      couponDetails: req.body.couponDetails || matchedCoupon || req.body.coupon || null,
       commissionRate: orderItems[0]?.commissionRate ?? 10,
       sellerCommissionRate: orderItems[0]?.commissionRate ?? 10,
       commissionPercentage: orderItems[0]?.commissionRate ?? 10,

@@ -185,14 +185,18 @@ export const applyCoupon = async (req, res) => {
         if (scope === "specific_kit") {
           if (!isKit) return false;
           if (isCustomized) return false;
-          if (applicableKits.length === 0) return true;
-          return isKitMatched;
+          const specificKitName = String(coupon.specificKitTitle || "").trim().toLowerCase();
+          const isNameMatched = Boolean(specificKitName && item.name && String(item.name).toLowerCase().includes(specificKitName));
+          if (applicableKits.length === 0 && !specificKitName) return false;
+          return isKitMatched || isNameMatched;
         }
 
         if (scope === "specific_product") {
           if (isKit) return false;
-          if (applicableProds.length === 0) return true;
-          return isProdMatched;
+          const specificProdName = String(coupon.specificProductName || "").trim().toLowerCase();
+          const isNameMatched = Boolean(specificProdName && item.name && String(item.name).toLowerCase().includes(specificProdName));
+          if (applicableProds.length === 0 && !specificProdName) return false;
+          return isProdMatched || isNameMatched;
         }
 
         // Storewide / fallback logic
