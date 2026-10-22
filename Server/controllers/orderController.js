@@ -976,18 +976,40 @@ export const getMyOrders = async (req, res) => {
           city: it.sellerCity || resolvedSellerDetails.city || ""
         };
 
+        const itemPrice = Math.round((Number(it.price !== undefined ? it.price : (it.finalPrice || 0))) * 100) / 100;
+        const itemOriginalPrice = Math.round((Number(it.originalPrice || it.price || it.finalPrice || 0)) * 100) / 100;
+        const itemFinalPrice = Math.round((Number(it.finalPrice !== undefined ? it.finalPrice : (it.price || 0))) * 100) / 100;
+        const itemOfferDiscount = Math.round((Number(it.offerDiscount || it.discount || 0)) * 100) / 100;
+        const itemDiscount = Math.round((Number(it.discount || it.offerDiscount || 0)) * 100) / 100;
+        const itemQuantity = Math.round((Number(it.quantity) || 1) * 100) / 100;
+        const itemTotal = it.total !== undefined ? Number(it.total) : Math.round((itemFinalPrice * itemQuantity) * 100) / 100;
+
         return {
           id: it._id || it.id,
           _id: it._id || it.id,
           productId: it.productId || it.id || it._id,
           name: it.name,
-          price: Math.round((Number(it.finalPrice || it.price) || 0) * 100) / 100,
-          quantity: Math.round((Number(it.quantity) || 1) * 100) / 100,
-          total: Math.round(((Number(it.finalPrice || it.price) || 0) * (Number(it.quantity) || 1)) * 100) / 100,
+          price: itemPrice,
+          originalPrice: itemOriginalPrice,
+          finalPrice: itemFinalPrice,
+          offerDiscount: itemOfferDiscount,
+          discount: itemDiscount,
+          discountPercentage: it.discountPercentage || 0,
+          couponCode: it.couponCode || "",
+          appliedCoupon: it.appliedCoupon || it.couponCode || "",
+          quantity: itemQuantity,
+          total: itemTotal,
+          taxableAmount: it.taxableAmount,
+          gstAmount: it.gstAmount,
           size: it.size || "",
           color: it.color || "",
           image: it.image || "",
           category: it.category || "Stationery",
+          unit: it.unit || "piece",
+          isMeterBased: Boolean(it.isMeterBased),
+          minMeter: it.minMeter,
+          meterStep: it.meterStep,
+          subCategory: it.subCategory || "",
           gst: it.gst !== undefined ? it.gst : (it.gstRate ?? it.gstPercent ?? 5),
           gstPercent: it.gstPercent !== undefined ? it.gstPercent : (it.gstRate ?? it.gst ?? 5),
           gstPercentage: it.gstPercentage !== undefined ? it.gstPercentage : (it.gstRate ?? it.gst ?? 5),
@@ -1014,6 +1036,7 @@ export const getMyOrders = async (req, res) => {
         id: ord.id || ord.orderId || ord._id,
         orderId: ord.orderId || ord.id || ord._id,
         date: ord.date || new Date(ord.createdAt).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', timeZone: 'Asia/Kolkata' }),
+        createdAt: ord.createdAt,
         status: canonicalStatus,
         overallStatus: canonicalStatus,
         customer: ord.customer || { name: ord.userName, email: ord.userEmail, phone: ord.userPhone },
@@ -1034,11 +1057,19 @@ export const getMyOrders = async (req, res) => {
         shippingCost: ord.shippingCost !== undefined ? ord.shippingCost : (ord.shippingFee || 0),
         shippingFee: ord.shippingFee !== undefined ? ord.shippingFee : (ord.shippingCost || 0),
         discount: ord.discount || ord.discountAmount || 0,
+        discountAmount: ord.discountAmount || ord.discount || 0,
+        couponCode: ord.couponCode || ord.couponDetails?.code || '',
+        couponDetails: ord.couponDetails || null,
+        appliedCoupon: ord.appliedCoupon || ord.couponCode || '',
+        pointsDiscount: ord.pointsDiscount || 0,
         total: ord.total || ord.totalAmount || 0,
         totalAmount: ord.totalAmount || ord.total || 0,
+        isGstInclusive: ord.isGstInclusive !== false,
         shippingAddress: ord.shippingAddress || { street: ord.address || '' },
         paymentMethod: ord.paymentMethod || 'UPI',
         paymentStatus: ord.paymentStatus || 'paid',
+        razorpayOrderId: ord.razorpayOrderId || '',
+        razorpayPaymentId: ord.razorpayPaymentId || '',
         estimatedDelivery: ord.estimatedDelivery || '3-5 Business Days',
         cancellationReason: ord.cancellationReason || '',
         cancelledBy: ord.cancelledBy || '',
@@ -1523,24 +1554,41 @@ export const createOrder = async (req, res) => {
           const applicableProds = (matchedCoupon.applicableProducts || []).map(extractId).filter(Boolean);
           const applicableKits = (matchedCoupon.applicableKits || []).map(extractId).filter(Boolean);
 
+          const isProductSpecificCoupon = Boolean(
+            specificProdId ||
+            specificKitId ||
+            applicableProds.length > 0 ||
+            applicableKits.length > 0 ||
+            matchedCoupon.applicableScope === 'specific_product' ||
+            matchedCoupon.applicableScope === 'specific_kit'
+          );
+
           const eligibleItems = orderItems.filter((item) => {
             const itemSellerId = extractId(item.sellerId || item.sellerDetails?.sellerId);
-            const itemProdId = extractId(item.productId || item.id || item._id);
+            const itemCandidates = [
+              extractId(item.productId),
+              extractId(item.id),
+              extractId(item._id),
+              extractId(item.customId)
+            ].filter(Boolean);
 
             if (isSellerScoped && targetSellerId && itemSellerId && itemSellerId !== targetSellerId) {
               return false;
             }
             if (specificProdId) {
-              return itemProdId === specificProdId;
+              return itemCandidates.includes(specificProdId);
             }
             if (applicableProds.length > 0) {
-              return applicableProds.includes(itemProdId);
+              return applicableProds.some(p => itemCandidates.includes(p));
             }
             if (specificKitId) {
-              return itemProdId === specificKitId;
+              return itemCandidates.includes(specificKitId);
             }
             if (applicableKits.length > 0) {
-              return applicableKits.includes(itemProdId);
+              return applicableKits.some(k => itemCandidates.includes(k));
+            }
+            if (isProductSpecificCoupon) {
+              return false;
             }
             return true;
           });
@@ -1567,6 +1615,17 @@ export const createOrder = async (req, res) => {
               it.finalPrice = Math.max(0, Math.round((Number(it.price || 0) - unitDisc) * 100) / 100);
               it.total = Math.max(0, Math.round((itGross - itDisc) * 100) / 100);
             });
+
+            // STRICTLY ZERO OUT any non-eligible items in this combine order
+            orderItems.forEach((it) => {
+              if (!eligibleItems.includes(it)) {
+                it.offerDiscount = 0;
+                it.discount = 0;
+                it.couponCode = "";
+                it.finalPrice = Number(it.price || 0);
+                it.total = Math.round((Number(it.price || 0) * Number(it.quantity || 1)) * 100) / 100;
+              }
+            });
           }
         }
       } catch (e) {
@@ -1574,9 +1633,38 @@ export const createOrder = async (req, res) => {
       }
     }
 
+    // Fetch dynamic platform logistics settings for free delivery threshold
+    let dynamicThreshold = 401;
+    let universalShippingFee = 49;
+    try {
+      const globalSettings = await PlatformSetting.findOne({ key: "global_settings" }).lean();
+      dynamicThreshold = Number(globalSettings?.freeShippingThreshold ?? globalSettings?.minOrderFreeShipping ?? 401);
+      universalShippingFee = Number(globalSettings?.shippingFee ?? 49);
+    } catch (e) {
+      console.warn("⚠️ Error fetching global settings for order creation:", e.message);
+    }
+
+    const overallItemsSubtotal = orderItems.reduce(
+      (sum, it) => sum + (Number(it.finalPrice || it.price || 0) * Number(it.quantity || 1)),
+      0
+    ) || 1;
+
+    let totalShipping = 0;
+    // Strict enforcement: if overall items subtotal qualifies for free shipping, delivery fee is 0
+    if (overallItemsSubtotal >= dynamicThreshold) {
+      totalShipping = 0;
+    } else if (shippingCost !== undefined && shippingCost !== null && !isNaN(Number(shippingCost))) {
+      totalShipping = Number(shippingCost);
+    } else if (shippingFee !== undefined && shippingFee !== null && !isNaN(Number(shippingFee))) {
+      totalShipping = Number(shippingFee);
+    } else {
+      const distinctCount = orderItems.length;
+      totalShipping = distinctCount * universalShippingFee;
+    }
+
     // Attach dynamic Seller Settlement breakdown (Rules 1, 2, 3 & 4)
-    const effectiveOrderTotal = Number(totalAmount || 0);
-    const customerState = req.body.shippingAddress?.state || newOrder.shippingAddress?.state || "Uttar Pradesh";
+    const effectiveOrderTotal = Number(totalAmount || 0) || overallItemsSubtotal;
+    const customerState = req.body.shippingAddress?.state || newOrder?.shippingAddress?.state || "Uttar Pradesh";
     for (const it of orderItems) {
       const itGross = Number(it.total) || Math.round(((Number(it.finalPrice || it.price || 0)) * (Number(it.quantity) || 1)) * 100) / 100;
       const itGstRate = Number(it.gstPercent ?? it.gstPercentage ?? it.gstRate ?? it.gst ?? (it.category?.toLowerCase()?.includes('book') ? 0 : 5));
@@ -1592,8 +1680,9 @@ export const createOrder = async (req, res) => {
         gstRate: itGstRate,
         category: it.category || "",
         name: it.name || it.productName || "",
-        deliveryCharge: req.body.shippingFee ?? req.body.shippingAmount ?? req.body.shippingCost ?? 40,
-        deliveryChargeBorneBy: req.body.deliveryChargeBorneBy || (effectiveOrderTotal > 400 ? 'admin' : (Number(req.body.shippingFee || req.body.shippingCost || 0) > 0 ? 'customer' : 'seller'))
+        deliveryCharge: totalShipping > 0 ? (req.body.shippingFee ?? req.body.shippingAmount ?? req.body.shippingCost ?? 40) : 0,
+        freeDeliveryThreshold: dynamicThreshold,
+        deliveryChargeBorneBy: req.body.deliveryChargeBorneBy || (effectiveOrderTotal >= dynamicThreshold ? 'admin' : (totalShipping > 0 ? 'customer' : 'seller'))
       });
       it.commissionRate = stl.commissionRate;
       it.commissionAmount = stl.commissionAmount;
@@ -1645,27 +1734,6 @@ export const createOrder = async (req, res) => {
     }
 
     const sellerGroups = Array.from(sellerGroupsMap.values());
-    const overallItemsSubtotal = orderItems.reduce(
-      (sum, it) => sum + (Number(it.finalPrice || it.price || 0) * Number(it.quantity || 1)),
-      0
-    ) || 1;
-
-    let totalShipping = 0;
-    if (shippingCost !== undefined && shippingCost !== null && !isNaN(Number(shippingCost))) {
-      totalShipping = Number(shippingCost);
-    } else if (shippingFee !== undefined && shippingFee !== null && !isNaN(Number(shippingFee))) {
-      totalShipping = Number(shippingFee);
-    } else {
-      try {
-        const globalSettings = await PlatformSetting.findOne({ key: "global_settings" }).lean();
-        const threshold = Number(globalSettings?.freeShippingThreshold ?? globalSettings?.minOrderFreeShipping ?? 999);
-        const fee = Number(globalSettings?.shippingFee ?? 49);
-        const distinctCount = orderItems.length;
-        totalShipping = overallItemsSubtotal >= threshold ? 0 : (distinctCount * fee);
-      } catch (e) {
-        totalShipping = overallItemsSubtotal >= 999 ? 0 : (orderItems.length * 49);
-      }
-    }
 
     // Check if any items have item-specific coupon/offer discounts
     const anyItemHasSpecificDiscount = orderItems.some(
@@ -1728,14 +1796,16 @@ export const createOrder = async (req, res) => {
       items: orderItems,
       subtotal: subtotal || overallItemsSubtotal || 0,
       taxAmount: Math.round(computedTax * 100) / 100,
-      shippingCost: shippingCost !== undefined ? shippingCost : (shippingFee || totalShipping || 0),
-      shippingFee: shippingFee !== undefined ? shippingFee : (shippingCost || totalShipping || 0),
+      freeDeliveryThreshold: dynamicThreshold,
+      shippingCost: totalShipping,
+      shippingFee: totalShipping,
       shippingGstRate: principalDeliveryGstRate,
       deliveryGstRate: principalDeliveryGstRate,
       discount: discount || discountAmount || totalDiscount || 0,
       discountAmount: discountAmount || discount || totalDiscount || 0,
       appliedCoupon: appliedCouponCode || "",
       couponCode: appliedCouponCode || "",
+      couponDetails: req.body.couponDetails || req.body.coupon || null,
       commissionRate: orderItems[0]?.commissionRate ?? 10,
       sellerCommissionRate: orderItems[0]?.commissionRate ?? 10,
       commissionPercentage: orderItems[0]?.commissionRate ?? 10,
@@ -2402,7 +2472,8 @@ export const updateOrder = async (req, res) => {
                 category: item.category || "",
                 name: item.name || item.productName || "",
                 deliveryCharge: existingOrder.shippingAmount || existingOrder.deliveryCharge || 40,
-                deliveryChargeBorneBy: existingOrder.deliveryChargeBorneBy || (ordTotal > 400 ? 'admin' : (Number(existingOrder.shippingAmount || 0) > 0 ? 'customer' : 'seller'))
+                freeDeliveryThreshold: Number(existingOrder.freeDeliveryThreshold ?? 401),
+                deliveryChargeBorneBy: existingOrder.deliveryChargeBorneBy || (ordTotal >= Number(existingOrder.freeDeliveryThreshold ?? 401) ? 'admin' : (Number(existingOrder.shippingAmount || 0) > 0 ? 'customer' : 'seller'))
               });
 
               item.commissionRate = stl.commissionRate;
@@ -2534,10 +2605,25 @@ export const updateOrder = async (req, res) => {
       };
     }
 
+    // Dynamically recalculate and synchronize settlementRule across order and items based on resolved paymentMethod and deliveryMode
+    const effectiveDeliveryMode = String(existingOrder.deliveryMode || req.body.deliveryMode || "").toLowerCase();
+    const effectiveCourier = String(existingOrder.courierName || req.body.courierName || "").trim();
+    const hasCourier = Boolean(effectiveCourier && effectiveCourier !== "N/A" && effectiveCourier !== "null");
+    const isExplicitSelf = effectiveDeliveryMode === "self_delivery" || Boolean(existingOrder.selfDeliveryDetails?.deliveryPersonName || existingOrder.selfDeliveryDetails?.deliveryPartnerToken);
+    const isExplicitThirdParty = effectiveDeliveryMode === "third_party" || (hasCourier && !isExplicitSelf);
+
+    const isCod = String(existingOrder.paymentMethod || "").toUpperCase().includes("COD");
+    const dynamicSettlementRule = isCod
+      ? (isExplicitThirdParty ? "COD_THIRD_PARTY_DELIVERY" : "COD_SELF_DELIVERY")
+      : (isExplicitThirdParty ? "ONLINE_THIRD_PARTY_DELIVERY" : "ONLINE_SELF_DELIVERY");
+
+    existingOrder.settlementRule = dynamicSettlementRule;
+
     // Propagate fulfillment details to all order items ONLY if updating entire order
     if (!itemToUpdate && existingOrder.items && Array.isArray(existingOrder.items)) {
       existingOrder.items.forEach(item => {
         if (req.body.deliveryMode) item.deliveryType = req.body.deliveryMode;
+        item.settlementRule = dynamicSettlementRule;
         if (req.body.courierName || req.body.trackingNumber !== undefined || req.body.trackingUrl) {
           item.thirdPartyDetails = {
             ...item.thirdPartyDetails,
@@ -2545,16 +2631,22 @@ export const updateOrder = async (req, res) => {
             trackingNumber: req.body.trackingNumber !== undefined ? req.body.trackingNumber : (existingOrder.trackingNumber || ""),
             trackingUrl: req.body.trackingUrl || existingOrder.trackingUrl || ""
           };
+          if (isExplicitThirdParty) {
+            item.selfDeliveryDetails = undefined;
+          }
         }
-        if (req.body.selfDeliveryDetails) {
+        if (req.body.selfDeliveryDetails && isExplicitSelf) {
           item.selfDeliveryDetails = existingOrder.selfDeliveryDetails;
         }
       });
+    } else if (itemToUpdate) {
+      itemToUpdate.settlementRule = dynamicSettlementRule;
     }
 
     existingOrder.markModified("items");
     existingOrder.markModified("selfDeliveryDetails");
     existingOrder.markModified("thirdPartyDetails");
+    existingOrder.markModified("settlementRule");
     existingOrder.markModified("overallStatus");
     existingOrder.markModified("status");
     await existingOrder.save();
@@ -2919,6 +3011,9 @@ export const downloadInvoice = async (req, res) => {
         );
         return matched;
       });
+      if (itemsToCheck.length === 0) {
+        itemsToCheck = enrichedOrder.items || [];
+      }
     }
 
     // STRICT PRODUCT & ORDER CONFIRMATION CHECK:
@@ -2934,8 +3029,10 @@ export const downloadInvoice = async (req, res) => {
       "return_requested", "returned", "exchange_requested", "exchanged", "refunded", "cancelled"
     ].includes(orderStatusVal);
 
+    const isSellerConfirmed = hasConfirmedItem || (isConfirmedAndOnward && itemsToCheck.length > 0);
+
     if (filterSellerId) {
-      if (!hasConfirmedItem) {
+      if (!isSellerConfirmed) {
         return res.status(400).json({
           message: `Tax Invoice cannot be generated while products for this seller are pending confirmation. Items must be confirmed before generating an invoice.`
         });
@@ -2954,8 +3051,13 @@ export const downloadInvoice = async (req, res) => {
 
     res.setHeader("Content-Type", "application/pdf");
     res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+    const viewQuery = String(req.query.view || req.query.audience || req.headers["x-view"] || "").toLowerCase();
+    const isSellerRole = req.user?.role === "seller" || req.headers["x-is-seller"] === "true";
+    const isExplicitSellerView = viewQuery === "seller" || viewQuery === "admin" || (isSellerRole && viewQuery !== "customer");
 
-    const pdfDoc = generateTaxInvoicePDF(enrichedOrder, filterSellerId);
+    const pdfDoc = generateTaxInvoicePDF(enrichedOrder, filterSellerId, {
+      view: isExplicitSellerView ? "seller" : "customer"
+    });
     pdfDoc.pipe(res);
   } catch (error) {
     console.error("Download invoice error:", error);
@@ -3273,10 +3375,22 @@ export const requestReturnExchange = async (req, res) => {
       return res.status(404).json({ message: "Order not found" });
     }
 
+    // Resolve the target item being returned or exchanged in this combined/single order
+    const targetItem = (req.body.itemId && Array.isArray(order.items))
+      ? order.items.find(it => String(it._id || it.id) === String(req.body.itemId)) || order.items[0]
+      : (Array.isArray(order.items) && order.items[0]) || null;
+
     const statusLower = String(order.status || "").toLowerCase().trim();
     const overallStatusLower = String(order.overallStatus || "").toLowerCase().trim();
+    const targetItemStatusLower = String(targetItem?.status || "").toLowerCase().trim();
     const validDeliveredStatuses = ["delivered", "completed", "fulfilled", "received", "delivered_to_customer", "order_delivered"];
-    const isDeliveredState = 
+
+    const isTargetItemDelivered = 
+      validDeliveredStatuses.includes(targetItemStatusLower) || 
+      targetItemStatusLower.includes("delivered") || 
+      targetItemStatusLower.includes("received");
+
+    const isOrderDelivered = 
       validDeliveredStatuses.includes(statusLower) || 
       validDeliveredStatuses.includes(overallStatusLower) || 
       statusLower.includes("delivered") || 
@@ -3285,9 +3399,11 @@ export const requestReturnExchange = async (req, res) => {
       statusLower.includes("received") || 
       Boolean(order.deliveredAt || order.deliveryDetails?.deliveredAt);
 
+    const isDeliveredState = isTargetItemDelivered || isOrderDelivered;
+
     if (!isDeliveredState) {
       return res.status(400).json({ 
-        message: `Return or Exchange is only available for delivered orders. Current status: '${order.status || order.overallStatus || 'Pending'}'` 
+        message: `Return or Exchange is only available for delivered items. Current item status: '${targetItem?.status || order.status || order.overallStatus || 'Pending'}'` 
       });
     }
 
@@ -3296,10 +3412,6 @@ export const requestReturnExchange = async (req, res) => {
     let isReturnable = true;
     let isRefundable = true;
     let isExchangeable = true;
-
-    const targetItem = (req.body.itemId && Array.isArray(order.items))
-      ? order.items.find(it => String(it._id || it.id) === String(req.body.itemId)) || order.items[0]
-      : (Array.isArray(order.items) && order.items[0]) || null;
 
     let prod = null;
     if (targetItem) {
@@ -3338,30 +3450,35 @@ export const requestReturnExchange = async (req, res) => {
       targetItem?.subCategory,
       prod?.subCategory,
       targetItem?.name,
-      prod?.name,
-      targetItem?.unit,
-      prod?.unit
+      prod?.name
     ].filter(Boolean).join(' ').toLowerCase();
 
-    const isUnstitched = Boolean(
-      targetItem?.isMeterBased ||
-      prod?.isMeterBased ||
-      targetItem?.unit === 'meter' ||
-      targetItem?.unit === 'm' ||
-      targetItem?.unit === 'mtr' ||
-      prod?.unit === 'meter' ||
-      prod?.unit === 'm' ||
-      prod?.unit === 'mtr' ||
+    const isExplicitFootwear = candTargetStr.includes('footwear') || candTargetStr.includes('shoe') || candTargetStr.includes('boot') || candTargetStr.includes('sandal') || candTargetStr.includes('sneaker') || candTargetStr.includes('sock');
+    const isExplicitBook = candTargetStr.includes('book') || candTargetStr.includes('ncert') || candTargetStr.includes('textbook') || candTargetStr.includes('atlas') || candTargetStr.includes('syllabus');
+    const isExplicitStationery = candTargetStr.includes('notebook') || candTargetStr.includes('register') || candTargetStr.includes('stationery') || candTargetStr.includes('pen') || candTargetStr.includes('pencil') || candTargetStr.includes('geometry');
+
+    const targetRawUnit = String(targetItem?.unit || prod?.unit || targetItem?.measureScale || prod?.measureScale || '').toLowerCase().trim();
+    const isTargetMeterUnit = targetRawUnit === 'meter' || targetRawUnit === 'meters' || targetRawUnit === 'mtr' || targetRawUnit === 'm';
+
+    const isTargetExplicitMeter = Boolean(
+      (targetItem?.isMeterBased === true || targetItem?.isMeterBased === 'true' || prod?.isMeterBased === true || prod?.isMeterBased === 'true' || isTargetMeterUnit) &&
+      !isExplicitFootwear && !isExplicitBook && !isExplicitStationery
+    );
+
+    const hasFabricKeyword = (
       candTargetStr.includes('unstitched') ||
       candTargetStr.includes('unstiched') ||
-      candTargetStr.includes('cloth') ||
-      candTargetStr.includes('fabric') ||
       candTargetStr.includes('shirting') ||
       candTargetStr.includes('suiting') ||
       candTargetStr.includes('kapda') ||
       candTargetStr.includes('than') ||
-      candTargetStr.includes('dress material') ||
-      (Number(targetItem?.quantity) % 1 !== 0)
+      candTargetStr.includes('dress material')
+    );
+
+    const isUnstitched = !isExplicitFootwear && !isExplicitBook && !isExplicitStationery && (
+      isTargetExplicitMeter ||
+      (hasFabricKeyword && !candTargetStr.includes('ready to wear') && !candTargetStr.includes('stitched')) ||
+      (Number(targetItem?.quantity) % 1 !== 0 && hasFabricKeyword)
     );
 
     // Use deliveredAt timestamp if recorded, otherwise fallback to updatedAt or current time if status is delivered
@@ -3406,7 +3523,7 @@ export const requestReturnExchange = async (req, res) => {
       order.refundStatus = type === "return" ? "Refund Requested" : "Partial Refund Requested";
     }
 
-    const effectiveExchangeDisplay = exchangeLength ? `${exchangeLength} Meter(s)` : (exchangeSize || "");
+    const effectiveExchangeDisplay = (isUnstitched && exchangeLength) ? `${exchangeLength} Meter(s)` : (exchangeSize || "");
 
     order.returnRequest = {
       itemId: targetItem ? (targetItem._id || targetItem.id) : undefined,
@@ -3415,8 +3532,8 @@ export const requestReturnExchange = async (req, res) => {
       reason: reason || "Customer request",
       comment: comment || "",
       exchangeSize: effectiveExchangeDisplay,
-      exchangeLength: exchangeLength ? Number(exchangeLength) : undefined,
-      isMeterBased: isUnstitched || Boolean(exchangeLength),
+      exchangeLength: (isUnstitched && exchangeLength) ? Number(exchangeLength) : undefined,
+      isMeterBased: Boolean(isUnstitched),
       exchangeColor: exchangeColor || "",
       priceDifference: Number(priceDifference) || 0,
       priceAdjustmentType: priceAdjustmentType || "none",
@@ -3582,6 +3699,13 @@ export const updateReturnExchangeStatus = async (req, res) => {
     }
     // ─────────────────────────────────────────────────────────────────────────
 
+    const targetItemId = order.returnRequest?.itemId;
+    const targetItem = Array.isArray(order.items) && targetItemId
+      ? order.items.find(it => String(it._id || it.id || it.productId) === String(targetItemId))
+      : (Array.isArray(order.items) && order.returnRequest?.itemName
+        ? order.items.find(it => it.name === order.returnRequest.itemName)
+        : null);
+
     let canonicalReturnStatus = rawStatus;
     let overallStatus = order.overallStatus;
     let title = "";
@@ -3591,7 +3715,7 @@ export const updateReturnExchangeStatus = async (req, res) => {
       canonicalReturnStatus = type === "exchange" ? "exchange_approved" : "return_approved";
       overallStatus = canonicalReturnStatus;
       title = type === "exchange" ? "Exchange Request Approved" : "Return Request Approved";
-      description = description || `Store Admin/Seller approved the ${type} request. Pickup will be arranged.`;
+      description = description || `Store Admin/Seller approved the ${type} request for ${targetItem ? targetItem.name : "item"}. Pickup will be arranged.`;
     } else if (rawStatus === "rejected" || rawStatus === "return_rejected" || rawStatus === "exchange_rejected") {
       canonicalReturnStatus = type === "exchange" ? "exchange_rejected" : "return_rejected";
       overallStatus = canonicalReturnStatus;
@@ -3613,7 +3737,13 @@ export const updateReturnExchangeStatus = async (req, res) => {
       order.selfDeliveryDetails.deliveryOtp = activeOtp;
       order.selfDeliveryDetails.otpLastSentAt = now;
       order.selfDeliveryDetails.otpExpiresAt = expiresAt;
-      if (Array.isArray(order.items)) {
+      if (targetItem) {
+        targetItem.deliveryOtp = activeOtp;
+        if (!targetItem.selfDeliveryDetails) targetItem.selfDeliveryDetails = {};
+        targetItem.selfDeliveryDetails.deliveryOtp = activeOtp;
+        targetItem.selfDeliveryDetails.otpLastSentAt = now;
+        targetItem.selfDeliveryDetails.otpExpiresAt = expiresAt;
+      } else if (Array.isArray(order.items)) {
         order.items.forEach(it => {
           it.deliveryOtp = activeOtp;
           if (!it.selfDeliveryDetails) it.selfDeliveryDetails = {};
@@ -3640,12 +3770,20 @@ export const updateReturnExchangeStatus = async (req, res) => {
       title = "Returned Item Received & Inspected";
       description = description || `Item received back at warehouse and passed quality inspection. Stock restored to inventory.`;
       
-      if (!order.stockRestored && Array.isArray(order.items)) {
-        for (const item of order.items) {
+      if (!order.stockRestored) {
+        if (targetItem) {
           try {
-            await incrementItemStock(item);
+            await incrementItemStock(targetItem);
           } catch (err) {
             console.warn("Stock restoration warning:", err.message);
+          }
+        } else if (Array.isArray(order.items)) {
+          for (const item of order.items) {
+            try {
+              await incrementItemStock(item);
+            } catch (err) {
+              console.warn("Stock restoration warning:", err.message);
+            }
           }
         }
         order.stockRestored = true;
@@ -3667,11 +3805,17 @@ export const updateReturnExchangeStatus = async (req, res) => {
       title = "Refund Processed & Completed";
       description = description || `Refund successfully processed. Reference TXN: ${refundTxnId || "N/A"}.`;
 
-      if (!order.stockRestored && Array.isArray(order.items)) {
-        for (const item of order.items) {
+      if (!order.stockRestored) {
+        if (targetItem) {
           try {
-            await incrementItemStock(item);
+            await incrementItemStock(targetItem);
           } catch (err) {}
+        } else if (Array.isArray(order.items)) {
+          for (const item of order.items) {
+            try {
+              await incrementItemStock(item);
+            } catch (err) {}
+          }
         }
         order.stockRestored = true;
       }
@@ -3696,7 +3840,13 @@ export const updateReturnExchangeStatus = async (req, res) => {
       order.selfDeliveryDetails.deliveryOtp = activeOtp;
       order.selfDeliveryDetails.otpLastSentAt = now;
       order.selfDeliveryDetails.otpExpiresAt = expiresAt;
-      if (Array.isArray(order.items)) {
+      if (targetItem) {
+        targetItem.deliveryOtp = activeOtp;
+        if (!targetItem.selfDeliveryDetails) targetItem.selfDeliveryDetails = {};
+        targetItem.selfDeliveryDetails.deliveryOtp = activeOtp;
+        targetItem.selfDeliveryDetails.otpLastSentAt = now;
+        targetItem.selfDeliveryDetails.otpExpiresAt = expiresAt;
+      } else if (Array.isArray(order.items)) {
         order.items.forEach(it => {
           it.deliveryOtp = activeOtp;
           if (!it.selfDeliveryDetails) it.selfDeliveryDetails = {};
@@ -3734,7 +3884,12 @@ export const updateReturnExchangeStatus = async (req, res) => {
       order.settlementStatus = "pending_exchange_buffer";
       order.isSettlementMatured = false;
 
-      if (Array.isArray(order.items)) {
+      if (targetItem) {
+        targetItem.exchangedAt = exchangedNow;
+        targetItem.settlementDueDate = exchangeSettlementDueDate;
+        targetItem.settlementStatus = "pending_exchange_buffer";
+        targetItem.isSettlementMatured = false;
+      } else if (Array.isArray(order.items)) {
         order.items.forEach(it => {
           it.exchangedAt = exchangedNow;
           it.settlementDueDate = exchangeSettlementDueDate;
@@ -3768,7 +3923,22 @@ export const updateReturnExchangeStatus = async (req, res) => {
       order.creditNoteNumber = order.creditNoteNumber || `CN-${displayId}`;
       order.creditNoteIssuedAt = order.creditNoteIssuedAt || new Date();
 
-      if (Array.isArray(order.items)) {
+      if (targetItem) {
+        targetItem.settlementStatus = "refunded";
+        targetItem.isSettlementMatured = false;
+        targetItem.tdsAmount = 0;
+        targetItem.gstTcsAmount = 0;
+        targetItem.cgstTcsAmount = 0;
+        targetItem.sgstTcsAmount = 0;
+        targetItem.igstTcsAmount = 0;
+        targetItem.commissionAmount = 0;
+        targetItem.gstOnCommissionAmount = 0;
+        targetItem.totalDeliveryDeduction = 0;
+        targetItem.totalDeductions = 0;
+        targetItem.sellerPayout = 0;
+        targetItem.sellerSettlement = 0;
+        targetItem.netSettlementAmount = 0;
+      } else if (Array.isArray(order.items)) {
         order.items.forEach(it => {
           it.settlementStatus = "refunded";
           it.isSettlementMatured = false;
@@ -3799,9 +3969,13 @@ export const updateReturnExchangeStatus = async (req, res) => {
     order.status = overallStatus;
 
     if (Array.isArray(order.items)) {
-      order.items.forEach(item => {
-        item.status = title;
-      });
+      if (targetItem) {
+        targetItem.status = title;
+      } else {
+        order.items.forEach(item => {
+          item.status = title;
+        });
+      }
     }
 
     order.timeline = order.timeline || [];

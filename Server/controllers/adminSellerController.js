@@ -509,7 +509,8 @@ export const downloadSellerFinancialStatement = async (req, res) => {
         sellerState,
         customerState,
         deliveryCharge: o.shippingAmount || o.deliveryCharge || 40,
-        deliveryChargeBorneBy: o.deliveryChargeBorneBy || (ordTotalVal >= 301 ? 'admin' : (Number(o.shippingAmount || 0) > 0 ? 'customer' : 'seller'))
+        freeDeliveryThreshold: Number(o.freeDeliveryThreshold ?? 401),
+        deliveryChargeBorneBy: o.deliveryChargeBorneBy || (ordTotalVal >= Number(o.freeDeliveryThreshold ?? 401) ? 'admin' : (Number(o.shippingAmount || 0) > 0 ? 'customer' : 'seller'))
       });
 
       if (!isCancelled) {

@@ -186,8 +186,8 @@ export function calculateSellerSettlement(grossSale, options = {}) {
       igstTcsRate: 0,
       igstTcsAmount: 0,
       // Delivery charges waived
-      isAbove400: gross >= 301,
-      isAboveThreshold: gross >= 301,
+      isAbove400: gross >= Number(options.freeDeliveryThreshold ?? options.minOrderFreeShipping ?? options.freeShippingThreshold ?? 401),
+      isAboveThreshold: gross >= Number(options.freeDeliveryThreshold ?? options.minOrderFreeShipping ?? options.freeShippingThreshold ?? 401),
       deliveryChargeBorneBy: "none",
       deliveryChargeAmount: 0,
       gstOnDeliveryRate: 0,
@@ -338,7 +338,8 @@ export function calculateSellerSettlement(grossSale, options = {}) {
     options.freeDeliveryThreshold ?? 
     options.minOrderFreeShipping ?? 
     options.freeShippingThreshold ?? 
-    301
+    rule.freeDeliveryThreshold ??
+    401
   );
   const isAboveThreshold = totalOrderValue >= freeDeliveryThreshold;
   const isAbove400 = isAboveThreshold; // Backward compatibility alias

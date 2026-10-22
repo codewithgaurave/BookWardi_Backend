@@ -1,10 +1,29 @@
 import Announcement from "../models/Announcement.js";
+import PlatformSetting from "../models/PlatformSetting.js";
 import User from "../models/User.js";
 import Seller from "../models/Seller.js";
 import {
   sendFast2SmsBackToSchoolPromo,
   sendFast2SmsSpecialDiscountPromo
 } from "../services/smsService.js";
+
+// Helper to detect free delivery threshold from announcement text / badge
+export function extractFreeDeliveryThreshold(text, badge = "") {
+  if (!text || typeof text !== "string") return null;
+  const combined = `${badge || ""} ${text || ""}`.toLowerCase();
+  const isFreeDelivery = combined.includes("free delivery") || combined.includes("free shipping") || combined.includes("freedelivery");
+  if (!isFreeDelivery) return null;
+
+  const match = text.match(/(?:over|above|min(?:imum)?|orders?\s*(?:over|above)?)\s*(?:₹|rs\.?|inr)?\s*(\d+)/i) ||
+                text.match(/(?:₹|rs\.?|inr)\s*(\d+)/i);
+  if (match && match[1]) {
+    const val = Number(match[1]);
+    if (!isNaN(val) && val > 0 && val < 100000) {
+      return val;
+    }
+  }
+  return null;
+}
 
 // Seed default announcement items if DB is empty
 const defaultAnnouncements = [
@@ -95,6 +114,27 @@ export const createAnnouncement = async (req, res) => {
 
     await announcement.save();
 
+    // Auto-sync free shipping threshold with platform settings if applicable
+    const extractedThreshold = extractFreeDeliveryThreshold(announcement.text, announcement.badge);
+    if (extractedThreshold && announcement.isActive) {
+      try {
+        await PlatformSetting.findOneAndUpdate(
+          { key: "global_settings" },
+          {
+            $set: {
+              freeShippingThreshold: extractedThreshold,
+              minOrderFreeShipping: extractedThreshold,
+              updatedAt: new Date(),
+              updatedBy: "Admin Announcement Sync"
+            }
+          },
+          { upsert: true }
+        );
+      } catch (err) {
+        console.warn("⚠️ Failed to sync announcement threshold with PlatformSetting:", err.message);
+      }
+    }
+
     res.status(201).json({
       success: true,
       message: "Top Announcement Bar item created successfully.",
@@ -126,6 +166,27 @@ export const updateAnnouncement = async (req, res) => {
     if (textColor !== undefined) item.textColor = textColor;
 
     await item.save();
+
+    // Auto-sync free shipping threshold with platform settings if applicable
+    const extractedThreshold = extractFreeDeliveryThreshold(item.text, item.badge);
+    if (extractedThreshold && item.isActive) {
+      try {
+        await PlatformSetting.findOneAndUpdate(
+          { key: "global_settings" },
+          {
+            $set: {
+              freeShippingThreshold: extractedThreshold,
+              minOrderFreeShipping: extractedThreshold,
+              updatedAt: new Date(),
+              updatedBy: "Admin Announcement Sync"
+            }
+          },
+          { upsert: true }
+        );
+      } catch (err) {
+        console.warn("⚠️ Failed to sync announcement threshold with PlatformSetting:", err.message);
+      }
+    }
 
     res.json({
       success: true,
