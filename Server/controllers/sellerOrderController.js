@@ -12,7 +12,7 @@ import { sendOrderStatusSms } from "../services/smsService.js";
 // Global in-memory cache for ultra-fast seller orders
 const sellerOrdersCache = new Map(); // sellerKey -> { data, timestamp }
 const sellerScopeCache = new Map(); // sellerKey -> { scope, timestamp }
-const SELLER_CACHE_TTL = 45 * 1000;
+const SELLER_CACHE_TTL = 3 * 1000;
 
 export const invalidateSellerOrdersCache = () => {
   sellerOrdersCache.clear();
@@ -476,7 +476,11 @@ export const formatSellerSingleOrder = (o, scope = null) => {
     overallStatus: formattedStatus,
     rawStatus: rawStatus,
     paymentMethod: o.paymentMethod || "UPI",
-    paymentStatus: o.paymentStatus || (String(o.paymentMethod || "").toUpperCase().includes("COD") ? "pending" : "Paid"),
+    paymentStatus: (
+      String(o.paymentStatus || "").toLowerCase() === "paid" ||
+      formattedStatus.toLowerCase().includes("delivered") ||
+      String(o.overallStatus || o.status || "").toLowerCase().includes("delivered")
+    ) ? "Paid" : (o.paymentStatus || (String(o.paymentMethod || "").toUpperCase().includes("COD") ? "Pending" : "Paid")),
     cancellationReason: o.cancellationReason || "",
     cancelledBy: o.cancelledBy || (o.cancellationReason ? "Customer" : ""),
     cancelledAt: o.cancelledAt || null,
@@ -1087,6 +1091,13 @@ export const updateSellerOrderStatus = async (req, res) => {
 
     if (formattedStatus.toLowerCase().includes("delivered")) {
       updatePayload.deliveredAt = order.deliveredAt || new Date();
+      const isCod = String(order.paymentMethod || "").toUpperCase().includes("COD") || String(order.paymentStatus || "").toLowerCase() !== "paid";
+      if (isCod) {
+        updatePayload.paymentStatus = "Paid";
+        updatePayload.isPaid = true;
+        updatePayload.codCollectedAt = order.codCollectedAt || new Date();
+        updatePayload.codCollectedBy = sellerInfo.storeName || "Delivery Partner";
+      }
     }
 
     if (resolvedMode === "third_party") {
