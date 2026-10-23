@@ -3424,9 +3424,19 @@ export const requestReturnExchange = async (req, res) => {
     }
 
     // Resolve the target item being returned or exchanged in this combined/single order
-    const targetItem = (req.body.itemId && Array.isArray(order.items))
-      ? order.items.find(it => String(it._id || it.id) === String(req.body.itemId)) || order.items[0]
-      : (Array.isArray(order.items) && order.items[0]) || null;
+    const targetItem = (Array.isArray(order.items) && order.items.length > 0)
+      ? (order.items.find(it => {
+          const reqId = req.body.itemId ? String(req.body.itemId).trim() : '';
+          const matchId = reqId && (
+            String(it._id || '') === reqId ||
+            String(it.id || '') === reqId ||
+            String(it.productId || '') === reqId
+          );
+          const reqName = req.body.itemName ? String(req.body.itemName).trim().toLowerCase() : '';
+          const matchName = reqName && String(it.name || '').trim().toLowerCase() === reqName;
+          return matchId || matchName;
+        }) || order.items[0])
+      : null;
 
     const statusLower = String(order.status || "").toLowerCase().trim();
     const overallStatusLower = String(order.overallStatus || "").toLowerCase().trim();
@@ -3445,6 +3455,10 @@ export const requestReturnExchange = async (req, res) => {
       statusLower.includes("completed") || 
       statusLower.includes("fulfilled") || 
       statusLower.includes("received") || 
+      statusLower.includes("exchange") || 
+      statusLower.includes("return") || 
+      overallStatusLower.includes("exchange") || 
+      overallStatusLower.includes("return") || 
       Boolean(order.deliveredAt || order.deliveryDetails?.deliveredAt);
 
     const isDeliveredState = isTargetItemDelivered || isOrderDelivered;
@@ -3615,6 +3629,12 @@ export const requestReturnExchange = async (req, res) => {
       timestamp: new Date(),
       updatedBy: "Customer"
     });
+
+    order.markModified("items");
+    order.markModified("returnRequest");
+    if (order.returnRequests) {
+      order.markModified("returnRequests");
+    }
 
     await order.save();
 
