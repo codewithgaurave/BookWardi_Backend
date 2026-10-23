@@ -18,8 +18,8 @@ import Seller from "../models/Seller.js";
  * - GST on Commission: 18% — कमीशन पर GST
  * - TDS: 0.1% — लागू TDS की कटौती
  * - GST TCS: 0.5% — जहाँ GST कानून के अनुसार लागू हो
- * - Delivery Charges + 18% GST: डिलीवरी का खर्च और उस पर GST तभी काटें, जब यह खर्च सेलर के जिम्मे हो
- * - ₹301 या अधिक के ऑर्डर पर: यदि डिलीवरी का खर्च एडमिन उठाता है, तो सेलर से डिलीवरी चार्ज और उसका GST नहीं काटना है
+ * - Delivery Charges (GST Inclusive): डिलीवरी का खर्च (GST सहित) तभी काटें, जब यह खर्च सेलर के जिम्मे हो
+ * - ₹301 या अधिक के ऑर्डर पर: यदि डिलीवरी का खर्च एडमिन उठाता है, तो सेलर से डिलीवरी चार्ज नहीं काटना है
  * 
  * Rule 3: COD + Self Delivery (कैश भुगतान + सेलर की डिलीवरी)
  * - ग्राहक पूरा पैसा सीधे सेलर को देगा।
@@ -37,9 +37,9 @@ import Seller from "../models/Seller.js";
  * - GST on Commission: 18% — कमीशन पर GST।
  * - TDS: 0.1% — लागू TDS की कटौती।
  * - GST TCS: 0.5% — जहाँ GST कानून के अनुसार लागू हो।
- * - Delivery Charges + 18% GST: डिलीवरी का खर्च और उस पर GST तभी काटें, जब यह खर्च सेलर के जिम्मे हो।
+ * - Delivery Charges (GST Inclusive): डिलीवरी का खर्च (GST सहित) तभी काटें, जब यह खर्च सेलर के जिम्मे हो।
  * - Final Seller Settlement: सभी लागू कटौतियों के बाद बची राशि सेलर को दी जाएगी।
- * - ₹301 या अधिक के ऑर्डर पर: यदि डिलीवरी का खर्च एडमिन उठाता है, तो सेलर से डिलीवरी चार्ज और उसका GST नहीं काटना है।
+ * - ₹301 या अधिक के ऑर्डर पर: यदि डिलीवरी का खर्च एडमिन उठाता है, तो सेलर से डिलीवरी चार्ज नहीं काटना है।
  */
 
 export const SETTLEMENT_RULES = {
@@ -122,11 +122,13 @@ export function calculateSellerSettlement(grossSale, options = {}) {
 
   const rawDeliveryMode = String(options.deliveryMode || options.deliveryType || "").toLowerCase();
   const hasCourier = Boolean(options.courierName && options.courierName !== "N/A" && options.courierName !== "");
+  const hasExplicitSelfRider = Boolean(options.selfDeliveryDetails?.deliveryPersonName || options.selfDeliveryDetails?.deliveryPartnerToken);
+  const isExplicitSelf = rawDeliveryMode.includes("self") || hasExplicitSelfRider;
   const isThirdParty = options.isThirdParty === true || 
                        rawDeliveryMode.includes("third") || 
                        rawDeliveryMode.includes("courier") || 
-                       (hasCourier && !rawDeliveryMode.includes("self")) ||
-                       options.isSelfDelivery === false;
+                       hasCourier ||
+                       !isExplicitSelf;
   const isSelfDelivery = !isThirdParty;
 
   // Determine active rule:
@@ -308,8 +310,8 @@ export function calculateSellerSettlement(grossSale, options = {}) {
       cgstTcsRate = Math.round((baseGstTcsRate / 2) * 1000) / 1000; // 0.25%
       sgstTcsRate = Math.round((baseGstTcsRate / 2) * 1000) / 1000; // 0.25%
       igstTcsRate = 0;
-      cgstTcsAmount = Math.round(((baseAmount * cgstTcsRate) / 100) * 100) / 100;
-      sgstTcsAmount = Math.round(((baseAmount * sgstTcsRate) / 100) * 100) / 100;
+      cgstTcsAmount = Math.round(((gross * cgstTcsRate) / 100) * 100) / 100;
+      sgstTcsAmount = Math.round(((gross * sgstTcsRate) / 100) * 100) / 100;
       igstTcsAmount = 0;
       gstTcsAmount = Math.round((cgstTcsAmount + sgstTcsAmount) * 100) / 100;
     } else {
@@ -318,7 +320,7 @@ export function calculateSellerSettlement(grossSale, options = {}) {
       igstTcsRate = baseGstTcsRate; // 0.5%
       cgstTcsAmount = 0;
       sgstTcsAmount = 0;
-      igstTcsAmount = Math.round(((baseAmount * igstTcsRate) / 100) * 100) / 100;
+      igstTcsAmount = Math.round(((gross * igstTcsRate) / 100) * 100) / 100;
       gstTcsAmount = igstTcsAmount;
     }
   }
@@ -330,7 +332,7 @@ export function calculateSellerSettlement(grossSale, options = {}) {
   // प्रोडक्ट पर GST है या नहीं, इससे TDS को कोई मतलब नहीं है।
   const tdsAmount = Math.round(((gross * tdsRate) / 100) * 100) / 100;
 
-  // 5. Delivery Charges + 18% GST (Rule 2 & Rule 4: Third-Party Delivery)
+  // 5. Delivery Charges (Rule 2 & Rule 4: Third-Party Delivery - GST Inclusive)
   // "₹301 से कम के ऑर्डर पर पोर्टल की डिलीवरी नीति के अनुसार चार्ज लागू होंगे।"
   // "₹301 या अधिक के ऑर्डर पर डिलीवरी का खर्च एडमिन उठाएगा, तो सेलर से यह खर्च नहीं काटना है।"
   const totalOrderValue = Number(options.orderTotal || options.totalAmount || gross);
@@ -345,22 +347,23 @@ export function calculateSellerSettlement(grossSale, options = {}) {
   const isAbove400 = isAboveThreshold; // Backward compatibility alias
   const adminBearsDeliveryAbove400 = options.adminBearsDeliveryAbove400 !== false && isAboveThreshold;
 
+  const customerShipping = Number(options.shippingFee ?? options.shippingCost ?? options.shippingAmount ?? 0);
   let deliveryChargeBorneBy = options.deliveryChargeBorneBy;
-  if (!deliveryChargeBorneBy) {
+  if (!deliveryChargeBorneBy || customerShipping > 0) {
     if (isAboveThreshold && (options.adminBearsDeliveryAbove400 !== false)) {
       deliveryChargeBorneBy = "admin";
+    } else if (customerShipping > 0) {
+      deliveryChargeBorneBy = "customer";
     } else if (options.isDeliveryBorneBySeller || options.deliveryBorneBy === "seller") {
       deliveryChargeBorneBy = "seller";
-    } else if (Number(options.shippingFee || options.shippingAmount || 0) > 0) {
-      deliveryChargeBorneBy = "customer";
     } else {
       // For third-party courier delivery < 301 where shipping is not charged to customer, seller bears delivery
       deliveryChargeBorneBy = isThirdParty ? "seller" : "admin";
     }
   }
 
-  // If order is >= ₹301 and admin absorbs it, seller is never deducted for delivery
-  const isDeliveryExemptedForSeller = isAboveThreshold && (options.adminBearsDeliveryAbove400 !== false);
+  // If order is >= free delivery threshold or customer paid shipping, seller is never deducted for delivery
+  const isDeliveryExemptedForSeller = isAboveThreshold || deliveryChargeBorneBy === "customer" || deliveryChargeBorneBy === "admin";
 
   let deliveryChargeAmount = 0;
   // Product GST rate is the default GST rate for delivery (Composite Supply under Section 8 of CGST Act)
@@ -376,10 +379,12 @@ export function calculateSellerSettlement(grossSale, options = {}) {
   let totalDeliveryDeduction = 0;
 
   if (isThirdParty && deliveryChargeBorneBy === "seller" && !isDeliveryExemptedForSeller) {
-    const rawDeliveryFee = Math.max(0, Number(options.deliveryCharge ?? options.shippingAmount ?? options.shippingFee ?? 40));
-    deliveryChargeAmount = Math.round(rawDeliveryFee * 100) / 100;
-    gstOnDeliveryAmount = Math.round(((deliveryChargeAmount * gstOnDeliveryRate) / 100) * 100) / 100;
-    totalDeliveryDeduction = Math.round((deliveryChargeAmount + gstOnDeliveryAmount) * 100) / 100;
+    const rawDeliveryFee = Math.max(0, Number(options.deliveryCharge ?? options.shippingFee ?? options.shippingCost ?? options.shippingAmount ?? 49));
+    // Delivery charges are GST INCLUSIVE (e.g. ₹49 total includes GST, no extra 5% added on top)
+    totalDeliveryDeduction = Math.round(rawDeliveryFee * 100) / 100;
+    const baseFee = Math.round((totalDeliveryDeduction / (1 + (gstOnDeliveryRate / 100))) * 100) / 100;
+    deliveryChargeAmount = baseFee;
+    gstOnDeliveryAmount = Math.round((totalDeliveryDeduction - baseFee) * 100) / 100;
   }
 
   const statutoryDeductions = Math.round(

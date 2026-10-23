@@ -6,6 +6,8 @@ import SchoolBulkOrder from "../models/SchoolBulkOrder.js";
 import { cacheMiddleware, clearCache } from "../utils/cache.js";
 import { downloadInvoice } from "../controllers/orderController.js";
 import { broadcastRealtimeEvent } from "../services/realtimeService.js";
+import Seller from "../models/Seller.js";
+import { sendFast2SmsBulkSchoolInquiryLive } from "../services/smsService.js";
 
 const router = express.Router();
 
@@ -277,6 +279,21 @@ router.post("/bulk-order", async (req, res) => {
         status: bulkOrder.status
       });
     } catch (rtErr) {}
+
+    // Dispatch Fast2SMS DLT Template 228310: Bulk School Inquiry Live for Bidding
+    try {
+      Seller.find({ status: "active", phone: { $exists: true, $ne: "" } })
+        .select("phone mobile")
+        .limit(20)
+        .lean()
+        .then((sellers) => {
+          const sellerPhones = [...new Set((sellers || []).map(s => s.phone || s.mobile).filter(Boolean))];
+          sellerPhones.forEach(p => {
+            sendFast2SmsBulkSchoolInquiryLive(p).catch(() => {});
+          });
+        })
+        .catch(() => {});
+    } catch (smsErr) {}
 
     return res.status(201).json({
       success: true,

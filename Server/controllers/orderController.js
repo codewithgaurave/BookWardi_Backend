@@ -12,7 +12,9 @@ import { sendDeliveryPartnerWhatsAppDispatch } from "../services/whatsappService
 import { broadcastRealtimeEvent } from "../services/realtimeService.js";
 import { calculateSellerSettlement, calculateSettlementMaturity, reconcileSellerSettlementBalances } from "../services/settlementService.js";
 import { 
+  sendFast2SmsOrderPlaced,
   sendFast2SmsOrderConfirmation, 
+  sendFast2SmsSellerNewOrder,
   sendFast2SmsOtp,
   sendFast2SmsOrderShippedWithTracking,
   sendFast2SmsOrderShipped,
@@ -20,6 +22,8 @@ import {
   sendFast2SmsOrderDelivered,
   sendFast2SmsOrderCancelled,
   sendFast2SmsRefundInitiated,
+  sendFast2SmsReturnApproved,
+  sendFast2SmsRefundProcessed,
   sendOrderStatusSms
 } from "../services/smsService.js";
 import { saveBase64ToFile } from "./sellerAuthController.js";
@@ -1697,9 +1701,11 @@ export const createOrder = async (req, res) => {
         gstRate: itGstRate,
         category: it.category || "",
         name: it.name || it.productName || "",
-        deliveryCharge: totalShipping > 0 ? (req.body.shippingFee ?? req.body.shippingAmount ?? req.body.shippingCost ?? 40) : 0,
+        deliveryCharge: totalShipping > 0 ? (req.body.shippingFee ?? req.body.shippingAmount ?? req.body.shippingCost ?? universalShippingFee ?? 49) : 0,
+        shippingFee: totalShipping,
+        shippingCost: totalShipping,
         freeDeliveryThreshold: dynamicThreshold,
-        deliveryChargeBorneBy: req.body.deliveryChargeBorneBy || (effectiveOrderTotal >= dynamicThreshold ? 'admin' : (totalShipping > 0 ? 'customer' : 'seller'))
+        deliveryChargeBorneBy: (effectiveOrderTotal >= dynamicThreshold ? 'admin' : (totalShipping > 0 ? 'customer' : (req.body.deliveryChargeBorneBy || 'seller')))
       });
       it.commissionRate = stl.commissionRate;
       it.commissionAmount = stl.commissionAmount;
@@ -1879,37 +1885,57 @@ export const createOrder = async (req, res) => {
     // Auto-clear cart in MongoDB database for user
     await autoClearUserCart(resolvedUserId, resolvedPhone);
 
-    // Send automated Fast2SMS DLT Order Confirmation SMS to Customer
+    // Send automated Fast2SMS DLT Order Placed SMS (Template 228314) to Customer
     try {
       const targetPhone = newOrder.customer?.phone || resolvedPhone;
       const displayOrderId = newOrder.orderId || newOrder.id || orderIdVal;
-      if (targetPhone && displayOrderId && !newOrder.orderConfirmationSmsSent) {
-        sendFast2SmsOrderConfirmation(targetPhone, displayOrderId)
+      if (targetPhone && displayOrderId && !newOrder.orderPlacedSmsSent) {
+        sendFast2SmsOrderPlaced(targetPhone, displayOrderId)
           .then(async (smsRes) => {
             if (smsRes?.success) {
-              console.log(`📲 [FAST2SMS] Order confirmation SMS sent to +91 ${targetPhone} for Order ${displayOrderId}`);
+              console.log(`📲 [FAST2SMS] Order placed SMS sent to +91 ${targetPhone} for Order ${displayOrderId}`);
               try {
                 await Order.updateOne(
                   { _id: newOrder._id },
                   {
                     $set: {
-                      orderConfirmationSmsSent: true,
-                      orderConfirmationSmsSentAt: new Date(),
-                      orderConfirmationSmsRequestId: smsRes.requestId
+                      orderPlacedSmsSent: true,
+                      orderPlacedSmsSentAt: new Date(),
+                      orderPlacedSmsRequestId: smsRes.requestId
                     }
                   }
                 );
               } catch (e) {}
             } else {
-              console.warn(`⚠️ [FAST2SMS] Order confirmation SMS dispatch warning for +91 ${targetPhone}:`, smsRes?.error || smsRes?.message);
+              console.warn(`⚠️ [FAST2SMS] Order placed SMS dispatch warning for +91 ${targetPhone}:`, smsRes?.error || smsRes?.message);
             }
           })
           .catch((smsErr) => {
-            console.warn("⚠️ [FAST2SMS] Order confirmation SMS dispatch error:", smsErr.message);
+            console.warn("⚠️ [FAST2SMS] Order placed SMS dispatch error:", smsErr.message);
           });
       }
+
+      // Send automated Fast2SMS DLT New Order Notification (Template 228311) to Seller(s)
+      const sellerPhones = [
+        ...new Set(
+          orderItems
+            .map(it => it.sellerPhone || it.sellerDetails?.phone)
+            .filter(Boolean)
+        )
+      ];
+      sellerPhones.forEach((sPhone) => {
+        sendFast2SmsSellerNewOrder(sPhone, displayOrderId)
+          .then((sRes) => {
+            if (sRes?.success) {
+              console.log(`📲 [FAST2SMS] New order alert SMS sent to seller +91 ${sPhone} for Order ${displayOrderId}`);
+            }
+          })
+          .catch((sErr) => {
+            console.warn(`⚠️ [FAST2SMS] Seller order alert dispatch error for +91 ${sPhone}:`, sErr.message);
+          });
+      });
     } catch (smsErr) {
-      console.warn("⚠️ [FAST2SMS] Failed to initiate order confirmation SMS:", smsErr.message);
+      console.warn("⚠️ [FAST2SMS] Failed to initiate order placed SMS:", smsErr.message);
     }
 
     try {
@@ -2487,10 +2513,15 @@ export const updateOrder = async (req, res) => {
                 customerState: existingOrder.shippingAddress?.state || "Uttar Pradesh",
                 gstRate: itemGstRate,
                 category: item.category || "",
-                name: item.name || item.productName || "",
-                deliveryCharge: existingOrder.shippingAmount || existingOrder.deliveryCharge || 40,
+                deliveryCharge: Number(existingOrder.shippingFee ?? existingOrder.shippingCost ?? existingOrder.shippingAmount ?? existingOrder.deliveryCharge ?? 49),
+                shippingFee: Number(existingOrder.shippingFee ?? existingOrder.shippingCost ?? existingOrder.shippingAmount ?? 0),
+                shippingCost: Number(existingOrder.shippingFee ?? existingOrder.shippingCost ?? existingOrder.shippingAmount ?? 0),
                 freeDeliveryThreshold: Number(existingOrder.freeDeliveryThreshold ?? 401),
-                deliveryChargeBorneBy: existingOrder.deliveryChargeBorneBy || (ordTotal >= Number(existingOrder.freeDeliveryThreshold ?? 401) ? 'admin' : (Number(existingOrder.shippingAmount || 0) > 0 ? 'customer' : 'seller'))
+                deliveryChargeBorneBy: (ordTotal >= Number(existingOrder.freeDeliveryThreshold ?? 401)) 
+                  ? 'admin' 
+                  : (Number(existingOrder.shippingFee ?? existingOrder.shippingCost ?? existingOrder.shippingAmount ?? 0) > 0 
+                      ? 'customer' 
+                      : (existingOrder.deliveryChargeBorneBy || 'seller'))
               });
 
               item.commissionRate = stl.commissionRate;
@@ -4016,12 +4047,25 @@ export const updateReturnExchangeStatus = async (req, res) => {
       console.warn("Auto-reconcile on return/exchange status update warning:", reconcileErr.message);
     }
 
-    // Fast2SMS DLT: Refund Initiated (225926) for return/exchange refund
+    // Fast2SMS DLT: Return Approved (228313), Refund Processed (228312), Refund Initiated (225926)
     try {
       const custPhone = order.customer?.phone || order.shippingAddress?.phone || order.phone;
       const cleanCustPhone = String(custPhone || "").replace(/\D/g, "").slice(-10);
       if (cleanCustPhone.length === 10) {
-        if (rawStatus === "refund_initiated" || rawStatus === "refund_completed" || rawStatus === "refunded") {
+        if (rawStatus === "approved" || rawStatus === "return_approved" || rawStatus === "exchange_approved") {
+          sendFast2SmsReturnApproved(cleanCustPhone, type, order.orderId)
+            .then(res => {
+              if (res?.success) console.log(`📲 [FAST2SMS] Return/Exchange approved SMS sent to +91 ${cleanCustPhone} for Order ${order.orderId}`);
+            })
+            .catch(() => {});
+        } else if (rawStatus === "refund_completed" || rawStatus === "refund_processed" || rawStatus === "refunded") {
+          const refAmt = Number(order.refundDetails?.amount || order.returnRequest?.refundAmount || order.totalAmount || 0);
+          sendFast2SmsRefundProcessed(cleanCustPhone, refAmt, order.orderId, refundTxnId)
+            .then(res => {
+              if (res?.success) console.log(`📲 [FAST2SMS] Refund processed SMS sent to +91 ${cleanCustPhone} for Order ${order.orderId}`);
+            })
+            .catch(() => {});
+        } else if (rawStatus === "refund_initiated") {
           const refAmt = Number(order.refundDetails?.amount || order.returnRequest?.refundAmount || order.totalAmount || 0);
           sendFast2SmsRefundInitiated(cleanCustPhone, refAmt, order.orderId).catch(() => {});
         }

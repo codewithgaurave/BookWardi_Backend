@@ -298,6 +298,18 @@ const orderSchema = new mongoose.Schema(
       type: String,
       default: ""
     },
+    orderPlacedSmsSent: {
+      type: Boolean,
+      default: false
+    },
+    orderPlacedSmsSentAt: {
+      type: Date,
+      default: null
+    },
+    orderPlacedSmsRequestId: {
+      type: String,
+      default: ""
+    },
     orderConfirmationSmsSent: {
       type: Boolean,
       default: false

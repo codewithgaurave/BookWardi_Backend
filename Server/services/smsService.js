@@ -6,17 +6,22 @@
  *
  * Approved DLT Templates:
  *  1. [225935] OTP: "your BOOK VARDI otp is {#VAR#} . do not share this otp with anyone . -BOOK VARDI"
- *  2. [225934] Order Confirmed: "Your BOOK VARDI order {#VAR#} has been confirmed successfully -BOOK VARDI"
- *  3. [225933] Shipped + Track Link: "Your BOOK VARDI order {#VAR#} has been shipped . Track your order here : {#VAR#} -BOOK VARDI"
- *  4. [225932] Shipped (Basic): "Your BOOK VARDI order {#VAR#} has been shipped . -BOOK VARDI"
- *  5. [225931] Out For Delivery: "Your BOOK VARDI {#VAR#} is out for delivery and will reach you soon . -BOOK VARDI"
- *  6. [225930] Delivered: "Your book vardi order {#VAR#} has been delivered successfully . Thank you for shopping with us -BOOK VARDI"
- *  7. [225929] Cancelled: "Your book vardi order {#VAR#} has been cancelled successfully . -BOOK VARDI"
- *  8. [225928] Payment Success: "Payment of rs {#VAR#} for your book vardi order {#VAR#} was successful . -BOOK VARDI"
- *  9. [225927] Payment Failed: "Payment of rs {#VAR#} for your book vardi order {#VAR#} was unsuccessful . please try again . -BOOK VARDI"
- * 10. [225926] Refund Initiated: "Refund of rs {#VAR#} for your book vardi order {#VAR#} has been initiated . -BOOK VARDI"
- * 11. [225925] Back to School Promo: "Back to school shopping is now easier with book vardi . Shop school uniforms and books today : {#VAR#} -BOOK VARDI"
- * 12. [225924] Special Discount Promo: "Book vardi special discount is available on school uniforms and books . shop now and save more . -BOOK VARDI"
+ *  2. [228314] Order Placed: "DEAR CUSTOMER , YOUR ORDER {#VAR#} HAS BEEN PLACED SUCCESSFULLY . WE WILL NOTIFY YOU ONCE THE SELLER CONFIRMS YOUR ORDER . - BOOK VARDI -BOOK VARDI"
+ *  3. [225934] Order Confirmed: "Your BOOK VARDI order {#VAR#} has been confirmed successfully -BOOK VARDI"
+ *  4. [228311] Seller New Order Alert: "HELLO SELLER , YOU HAVE RECEIVED A NEW ORDER {#VAR#} ON BOOK VARDI . PLEASE LOGIN TO YOUR SELLER PANEL TO CONFIRM AND PACK THE ORDER . - BOOK VARDI -BOOK VARDI"
+ *  5. [228313] Return/Exchange Approved: "YOUR {#VAR#} REQUEST FOR BOOK VARDI ORDER {#VAR#} HAS BEEN APPROVED . OUR COURIER PARTNER WILL CONTACT YOU SOON FOR PICKUP . - BOOK VARDI -BOOK VARDI"
+ *  6. [228312] Refund Processed: "REFUND OF RS .{#VAR#} FOR YOUR BOOK VARDI ORDER {#VAR#} HAS BEEN PROCESSED SUCCESSFULLY . REF NO : {#VAR#} . IT WILL CREDIT IN 3-5 BANK DAYS . - BOOK VARDI -BOOK VARDI"
+ *  7. [228310] Bulk School Inquiry: "NEW BULK SCHOOL INQUIRY IS LIVE ON BOOK VARDI FOR BIDDING . LOGIN TO YOUR SELLER PORTAL TO SUMBIT YOUR QUOTATION . - BOOK VARDI -BOOK VARDI"
+ *  8. [225933] Shipped + Track Link: "Your BOOK VARDI order {#VAR#} has been shipped . Track your order here : {#VAR#} -BOOK VARDI"
+ *  9. [225932] Shipped (Basic): "Your BOOK VARDI order {#VAR#} has been shipped . -BOOK VARDI"
+ * 10. [225931] Out For Delivery: "Your BOOK VARDI {#VAR#} is out for delivery and will reach you soon . -BOOK VARDI"
+ * 11. [225930] Delivered: "Your book vardi order {#VAR#} has been delivered successfully . Thank you for shopping with us -BOOK VARDI"
+ * 12. [225929] Cancelled: "Your book vardi order {#VAR#} has been cancelled successfully . -BOOK VARDI"
+ * 13. [225928] Payment Success: "Payment of rs {#VAR#} for your book vardi order {#VAR#} was successful . -BOOK VARDI"
+ * 14. [225927] Payment Failed: "Payment of rs {#VAR#} for your book vardi order {#VAR#} was unsuccessful . please try again . -BOOK VARDI"
+ * 15. [225926] Refund Initiated: "Refund of rs {#VAR#} for your book vardi order {#VAR#} has been initiated . -BOOK VARDI"
+ * 16. [225925] Back to School Promo: "Back to school shopping is now easier with book vardi . Shop school uniforms and books today : {#VAR#} -BOOK VARDI"
+ * 17. [225924] Special Discount Promo: "Book vardi special discount is available on school uniforms and books . shop now and save more . -BOOK VARDI"
  */
 
 // Core internal dispatcher for Fast2SMS DLT
@@ -114,7 +119,25 @@ export const sendFast2SmsOtp = async (phone, otp) => {
 };
 
 /**
- * 2. Template ID 225934: Order Confirmed
+ * 2. Template ID 228314: Order Placed Successfully (Customer Notification)
+ * "DEAR CUSTOMER , YOUR ORDER {#VAR#} HAS BEEN PLACED SUCCESSFULLY . WE WILL NOTIFY YOU ONCE THE SELLER CONFIRMS YOUR ORDER . - BOOK VARDI -BOOK VARDI"
+ */
+export const sendFast2SmsOrderPlaced = async (phone, orderId) => {
+  const messageId = process.env.FAST2SMS_ORDER_PLACED_MESSAGE_ID || "228314";
+  const cleanOrderId = String(orderId || "").trim();
+  if (!cleanOrderId) {
+    return { success: false, message: "Order ID is required" };
+  }
+  return dispatchFast2Sms({
+    phone,
+    messageId,
+    variablesValues: cleanOrderId,
+    label: "Order Placed SMS"
+  });
+};
+
+/**
+ * 3. Template ID 225934: Order Confirmed
  * "Your BOOK VARDI order {#VAR#} has been confirmed successfully -BOOK VARDI"
  */
 export const sendFast2SmsOrderConfirmation = async (phone, orderId) => {
@@ -128,6 +151,24 @@ export const sendFast2SmsOrderConfirmation = async (phone, orderId) => {
     messageId,
     variablesValues: cleanOrderId,
     label: "Order Confirmation SMS"
+  });
+};
+
+/**
+ * 4. Template ID 228311: New Order Alert to Seller
+ * "HELLO SELLER , YOU HAVE RECEIVED A NEW ORDER {#VAR#} ON BOOK VARDI . PLEASE LOGIN TO YOUR SELLER PANEL TO CONFIRM AND PACK THE ORDER . - BOOK VARDI -BOOK VARDI"
+ */
+export const sendFast2SmsSellerNewOrder = async (phone, orderId) => {
+  const messageId = process.env.FAST2SMS_SELLER_NEW_ORDER_MESSAGE_ID || "228311";
+  const cleanOrderId = String(orderId || "").trim();
+  if (!cleanOrderId) {
+    return { success: false, message: "Order ID is required" };
+  }
+  return dispatchFast2Sms({
+    phone,
+    messageId,
+    variablesValues: cleanOrderId,
+    label: "Seller New Order Alert SMS"
   });
 };
 
@@ -312,6 +353,59 @@ export const sendFast2SmsSpecialDiscountPromo = async (phone) => {
 };
 
 /**
+ * 13. Template ID 228313: Return / Exchange Request Approved
+ * "YOUR {#VAR#} REQUEST FOR BOOK VARDI ORDER {#VAR#} HAS BEEN APPROVED . OUR COURIER PARTNER WILL CONTACT YOU SOON FOR PICKUP . - BOOK VARDI -BOOK VARDI"
+ */
+export const sendFast2SmsReturnApproved = async (phone, requestType = "RETURN", orderId) => {
+  const messageId = process.env.FAST2SMS_RETURN_APPROVED_MESSAGE_ID || "228313";
+  const cleanOrderId = String(orderId || "").trim();
+  const cleanType = String(requestType || "RETURN").toUpperCase().trim();
+  if (!cleanOrderId) {
+    return { success: false, message: "Order ID is required" };
+  }
+  return dispatchFast2Sms({
+    phone,
+    messageId,
+    variablesValues: `${cleanType}|${cleanOrderId}`,
+    label: "Return/Exchange Approved SMS"
+  });
+};
+
+/**
+ * 14. Template ID 228312: Refund Processed Successfully
+ * "REFUND OF RS .{#VAR#} FOR YOUR BOOK VARDI ORDER {#VAR#} HAS BEEN PROCESSED SUCCESSFULLY . REF NO : {#VAR#} . IT WILL CREDIT IN 3-5 BANK DAYS . - BOOK VARDI -BOOK VARDI"
+ */
+export const sendFast2SmsRefundProcessed = async (phone, amount, orderId, refNo = "") => {
+  const messageId = process.env.FAST2SMS_REFUND_PROCESSED_MESSAGE_ID || "228312";
+  const cleanOrderId = String(orderId || "").trim();
+  const cleanAmount = String(Math.round(Number(amount) || 0));
+  const cleanRefNo = String(refNo || `REF-${cleanOrderId}`).trim();
+  if (!cleanOrderId) {
+    return { success: false, message: "Order ID is required" };
+  }
+  return dispatchFast2Sms({
+    phone,
+    messageId,
+    variablesValues: `${cleanAmount}|${cleanOrderId}|${cleanRefNo}`,
+    label: "Refund Processed SMS"
+  });
+};
+
+/**
+ * 15. Template ID 228310: Bulk School Inquiry Live for Bidding (Static Content)
+ * "NEW BULK SCHOOL INQUIRY IS LIVE ON BOOK VARDI FOR BIDDING . LOGIN TO YOUR SELLER PORTAL TO SUMBIT YOUR QUOTATION . - BOOK VARDI -BOOK VARDI"
+ */
+export const sendFast2SmsBulkSchoolInquiryLive = async (phone) => {
+  const messageId = process.env.FAST2SMS_BULK_SCHOOL_INQUIRY_MESSAGE_ID || "228310";
+  return dispatchFast2Sms({
+    phone,
+    messageId,
+    variablesValues: "",
+    label: "Bulk School Inquiry Live SMS"
+  });
+};
+
+/**
  * Unified Helper: Automatically dispatch the appropriate DLT SMS based on order status change
  */
 export const sendOrderStatusSms = async (order, newStatus, extraData = {}) => {
@@ -326,8 +420,12 @@ export const sendOrderStatusSms = async (order, newStatus, extraData = {}) => {
   try {
     switch (statusKey) {
       case "placed":
+      case "order_placed":
+        return await sendFast2SmsOrderPlaced(cleanPhone, orderId);
+
       case "confirmed":
       case "order_confirmed":
+      case "accepted":
         return await sendFast2SmsOrderConfirmation(cleanPhone, orderId);
 
       case "shipped":
@@ -349,9 +447,22 @@ export const sendOrderStatusSms = async (order, newStatus, extraData = {}) => {
       case "canceled":
         return await sendFast2SmsOrderCancelled(cleanPhone, orderId);
 
-      case "refund_initiated":
+      case "return_approved":
+      case "exchange_approved":
+      case "approved": {
+        const reqType = (extraData.type || extraData.requestType || order.returnRequest?.type || "RETURN").toUpperCase();
+        return await sendFast2SmsReturnApproved(cleanPhone, reqType, orderId);
+      }
+
       case "refund_processed":
-      case "refund_completed": {
+      case "refund_completed":
+      case "refunded": {
+        const refundAmt = Number(extraData.refundAmount ?? order.refundDetails?.amount ?? order.totalAmount ?? 0);
+        const refNo = extraData.refundTxnId || extraData.refNo || order.refundDetails?.refundTxnId || `REF-${orderId}`;
+        return await sendFast2SmsRefundProcessed(cleanPhone, refundAmt, orderId, refNo);
+      }
+
+      case "refund_initiated": {
         const refundAmt = Number(extraData.refundAmount ?? order.refundDetails?.amount ?? order.totalAmount ?? 0);
         return await sendFast2SmsRefundInitiated(cleanPhone, refundAmt, orderId);
       }
@@ -367,7 +478,9 @@ export const sendOrderStatusSms = async (order, newStatus, extraData = {}) => {
 
 export default {
   sendFast2SmsOtp,
+  sendFast2SmsOrderPlaced,
   sendFast2SmsOrderConfirmation,
+  sendFast2SmsSellerNewOrder,
   sendFast2SmsOrderShippedWithTracking,
   sendFast2SmsOrderShipped,
   sendFast2SmsOutForDelivery,
@@ -376,6 +489,9 @@ export default {
   sendFast2SmsPaymentSuccess,
   sendFast2SmsPaymentFailed,
   sendFast2SmsRefundInitiated,
+  sendFast2SmsReturnApproved,
+  sendFast2SmsRefundProcessed,
+  sendFast2SmsBulkSchoolInquiryLive,
   sendFast2SmsBackToSchoolPromo,
   sendFast2SmsSpecialDiscountPromo,
   sendOrderStatusSms

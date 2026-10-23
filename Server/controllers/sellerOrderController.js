@@ -425,18 +425,23 @@ export const formatSellerSingleOrder = (o, scope = null) => {
 
   const settlementGross = Math.max(0, Math.round((computedItemsSubtotal - resolvedDiscount) * 100) / 100);
 
+  const customerShippingFee = Number(o.shippingFee ?? o.shippingCost ?? o.shippingAmount ?? 0);
+  const resolvedBorneBy = o.deliveryChargeBorneBy || (ordTotalVal >= Number(o.freeDeliveryThreshold ?? 401) ? 'admin' : (customerShippingFee > 0 ? 'customer' : 'seller'));
+
   const orderSettlement = calculateSellerSettlement(settlementGross, {
     baseAmount: settlementGross,
     commissionRate: Number(o.commissionRate ?? 10),
     paymentMethod: o.paymentMethod || "UPI",
-    deliveryMode: o.deliveryMode || (o.selfDeliveryDetails?.deliveryPartnerToken ? "self_delivery" : "third_party"),
+    deliveryMode: o.deliveryMode || (o.selfDeliveryDetails?.deliveryPersonName ? "self_delivery" : "third_party"),
     courierName: o.courierName,
     orderTotal: ordTotalVal,
     sellerState: sellerStateVal,
     customerState: customerStateVal,
-    deliveryCharge: o.shippingAmount || o.deliveryCharge || 40,
+    deliveryCharge: customerShippingFee || o.deliveryCharge || 49,
+    shippingFee: customerShippingFee,
+    shippingCost: customerShippingFee,
     freeDeliveryThreshold: Number(o.freeDeliveryThreshold ?? 401),
-    deliveryChargeBorneBy: o.deliveryChargeBorneBy || (ordTotalVal >= Number(o.freeDeliveryThreshold ?? 401) ? 'admin' : (Number(o.shippingAmount || 0) > 0 ? 'customer' : 'seller')),
+    deliveryChargeBorneBy: resolvedBorneBy,
     isCancelled: isCancelledOrder,
     isRefunded: isCancelledOrder
   });
@@ -530,7 +535,7 @@ export const formatSellerSingleOrder = (o, scope = null) => {
       const itemStl = calculateSellerSettlement(itemGross, {
         commissionRate: Number(item.commissionRate ?? o.commissionRate ?? 10),
         paymentMethod: o.paymentMethod || "UPI",
-        deliveryMode: item.deliveryType || o.deliveryMode || "self_delivery",
+        deliveryMode: item.deliveryType || o.deliveryMode || (o.selfDeliveryDetails?.deliveryPersonName ? "self_delivery" : "third_party"),
         courierName: o.courierName || item.thirdPartyDetails?.courierName,
         orderTotal: ordTotalVal || itemGross,
         sellerState: sellerStateVal,
@@ -538,8 +543,11 @@ export const formatSellerSingleOrder = (o, scope = null) => {
         gstRate: itGstRate,
         category: item.category || "",
         name: item.name || "",
-        deliveryCharge: o.shippingAmount || o.deliveryCharge || 40,
-        deliveryChargeBorneBy: o.deliveryChargeBorneBy || (ordTotalVal > 400 ? 'admin' : (Number(o.shippingAmount || 0) > 0 ? 'customer' : 'seller')),
+        deliveryCharge: customerShippingFee || o.deliveryCharge || 49,
+        shippingFee: customerShippingFee,
+        shippingCost: customerShippingFee,
+        freeDeliveryThreshold: Number(o.freeDeliveryThreshold ?? 401),
+        deliveryChargeBorneBy: resolvedBorneBy,
         isCancelled: isItemCancelled,
         isRefunded: isItemCancelled
       });
@@ -872,6 +880,57 @@ export const updateSellerOrderItemStatus = async (req, res) => {
       item.selfDeliveryDetails = undefined;
     }
 
+    // Dynamic Settlement Recalculation on Fulfillment Update
+    const itemGross = Number(item.total || Math.max(0, (Number(item.price || 0) * Number(item.quantity || 1)) - Number(item.offerDiscount || item.discount || 0)));
+    const itGstRate = Number(item.gstRate ?? item.gstPercent ?? item.gstPercentage ?? item.gst ?? (item.category?.toLowerCase()?.includes('book') ? 0 : 5));
+    const customerShippingFee = Number(order.shippingFee ?? order.shippingCost ?? order.shippingAmount ?? 0);
+    const ordTotalVal = Number(order.totalAmount || order.total || itemGross);
+    const freeDeliveryThreshold = Number(order.freeDeliveryThreshold ?? 401);
+    const resolvedBorneBy = (ordTotalVal >= freeDeliveryThreshold) ? 'admin' : (customerShippingFee > 0 ? 'customer' : (order.deliveryChargeBorneBy || 'seller'));
+
+    const itemStl = calculateSellerSettlement(itemGross, {
+      commissionRate: Number(item.commissionRate ?? order.commissionRate ?? sellerInfo.commissionRate ?? 10),
+      paymentMethod: order.paymentMethod || "UPI",
+      deliveryMode: resolvedMode,
+      courierName: order.courierName || item.thirdPartyDetails?.courierName,
+      orderTotal: ordTotalVal,
+      sellerState: sellerInfo.state || "Uttar Pradesh",
+      customerState: order.shippingAddress?.state || "Uttar Pradesh",
+      gstRate: itGstRate,
+      category: item.category || "",
+      name: item.name || "",
+      deliveryCharge: customerShippingFee || order.deliveryCharge || 49,
+      shippingFee: customerShippingFee,
+      shippingCost: customerShippingFee,
+      freeDeliveryThreshold,
+      deliveryChargeBorneBy: resolvedBorneBy,
+      isCancelled: ['cancelled', 'canceled', 'refunded'].includes(String(formattedStatus).toLowerCase())
+    });
+
+    item.commissionRate = itemStl.commissionRate;
+    item.commissionAmount = itemStl.commissionAmount;
+    item.gstOnCommissionRate = itemStl.gstOnCommissionRate;
+    item.gstOnCommissionAmount = itemStl.gstOnCommissionAmount;
+    item.tdsRate = itemStl.tdsRate;
+    item.tdsAmount = itemStl.tdsAmount;
+    item.isIntraState = itemStl.isIntraState;
+    item.gstTcsRate = itemStl.gstTcsRate;
+    item.gstTcsAmount = itemStl.gstTcsAmount;
+    item.cgstTcsRate = itemStl.cgstTcsRate;
+    item.cgstTcsAmount = itemStl.cgstTcsAmount;
+    item.sgstTcsRate = itemStl.sgstTcsRate;
+    item.sgstTcsAmount = itemStl.sgstTcsAmount;
+    item.igstTcsRate = itemStl.igstTcsRate;
+    item.igstTcsAmount = itemStl.igstTcsAmount;
+    item.deliveryChargeAmount = itemStl.deliveryChargeAmount;
+    item.gstOnDeliveryAmount = itemStl.gstOnDeliveryAmount;
+    item.totalDeliveryDeduction = itemStl.totalDeliveryDeduction;
+    item.deliveryChargeBorneBy = itemStl.deliveryChargeBorneBy;
+    item.settlementRule = itemStl.ruleCode;
+    item.totalDeductions = itemStl.totalDeductions;
+    item.netSettlementAmount = itemStl.netSettlement;
+    order.deliveryChargeBorneBy = resolvedBorneBy;
+
     order.timeline = order.timeline || [];
     order.timeline.push({
       status: formattedStatus.toLowerCase(),
@@ -895,6 +954,14 @@ export const updateSellerOrderItemStatus = async (req, res) => {
         status: order.overallStatus || order.status
       });
     } catch (rtErr) {}
+
+    // Dispatch status SMS to customer if item/order is confirmed, shipped, etc.
+    try {
+      const targetStatus = formattedStatus || order.overallStatus;
+      sendOrderStatusSms(order, targetStatus, {
+        trackingUrl: order.trackingUrl || sanitizedItem?.selfDeliveryDetails?.trackingUrl || sanitizedItem?.thirdPartyDetails?.trackingUrl
+      }).catch(err => console.warn("⚠️ [FAST2SMS] Seller item status update SMS error:", err.message));
+    } catch (smsErr) {}
 
     const sanitizedItem = { ...(item.toObject ? item.toObject() : item) };
     if (sanitizedItem.selfDeliveryDetails) {
@@ -1166,6 +1233,32 @@ export const updateSellerOrderStatus = async (req, res) => {
           }
         }
 
+        const itemGross = Number(itemObj.total || Math.max(0, (Number(itemObj.price || 0) * Number(itemObj.quantity || 1)) - Number(itemObj.offerDiscount || itemObj.discount || 0)));
+        const itGstRate = Number(itemObj.gstRate ?? itemObj.gstPercent ?? itemObj.gstPercentage ?? itemObj.gst ?? (itemObj.category?.toLowerCase()?.includes('book') ? 0 : 5));
+        const customerShippingFee = Number(order.shippingFee ?? order.shippingCost ?? order.shippingAmount ?? 0);
+        const ordTotalVal = Number(order.totalAmount || order.total || itemGross);
+        const freeDeliveryThreshold = Number(order.freeDeliveryThreshold ?? 401);
+        const resolvedBorneBy = (ordTotalVal >= freeDeliveryThreshold) ? 'admin' : (customerShippingFee > 0 ? 'customer' : (order.deliveryChargeBorneBy || 'seller'));
+
+        const itemStl = calculateSellerSettlement(itemGross, {
+          commissionRate: Number(itemObj.commissionRate ?? order.commissionRate ?? sellerInfo.commissionRate ?? 10),
+          paymentMethod: order.paymentMethod || "UPI",
+          deliveryMode: resolvedMode,
+          courierName: order.courierName || courierName,
+          orderTotal: ordTotalVal,
+          sellerState: sellerInfo.state || "Uttar Pradesh",
+          customerState: order.shippingAddress?.state || "Uttar Pradesh",
+          gstRate: itGstRate,
+          category: itemObj.category || "",
+          name: itemObj.name || "",
+          deliveryCharge: customerShippingFee || order.deliveryCharge || 49,
+          shippingFee: customerShippingFee,
+          shippingCost: customerShippingFee,
+          freeDeliveryThreshold,
+          deliveryChargeBorneBy: resolvedBorneBy,
+          isCancelled: ['cancelled', 'canceled', 'refunded'].includes(String(nextStatus).toLowerCase())
+        });
+
         return {
           ...itemObj,
           status: nextStatus,
@@ -1174,6 +1267,28 @@ export const updateSellerOrderStatus = async (req, res) => {
           sellerName: sellerInfo.sellerName,
           storeName: sellerInfo.storeName,
           sellerPhone: sellerInfo.phone,
+          commissionRate: itemStl.commissionRate,
+          commissionAmount: itemStl.commissionAmount,
+          gstOnCommissionRate: itemStl.gstOnCommissionRate,
+          gstOnCommissionAmount: itemStl.gstOnCommissionAmount,
+          tdsRate: itemStl.tdsRate,
+          tdsAmount: itemStl.tdsAmount,
+          isIntraState: itemStl.isIntraState,
+          gstTcsRate: itemStl.gstTcsRate,
+          gstTcsAmount: itemStl.gstTcsAmount,
+          cgstTcsRate: itemStl.cgstTcsRate,
+          cgstTcsAmount: itemStl.cgstTcsAmount,
+          sgstTcsRate: itemStl.sgstTcsRate,
+          sgstTcsAmount: itemStl.sgstTcsAmount,
+          igstTcsRate: itemStl.igstTcsRate,
+          igstTcsAmount: itemStl.igstTcsAmount,
+          deliveryChargeAmount: itemStl.deliveryChargeAmount,
+          gstOnDeliveryAmount: itemStl.gstOnDeliveryAmount,
+          totalDeliveryDeduction: itemStl.totalDeliveryDeduction,
+          deliveryChargeBorneBy: itemStl.deliveryChargeBorneBy,
+          settlementRule: itemStl.ruleCode,
+          totalDeductions: itemStl.totalDeductions,
+          netSettlementAmount: itemStl.netSettlement,
           ...(resolvedMode === "third_party" ? {
             thirdPartyDetails: {
               ...(itemObj.thirdPartyDetails || {}),

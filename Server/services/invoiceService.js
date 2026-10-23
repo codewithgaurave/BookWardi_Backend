@@ -1066,6 +1066,41 @@ export const generateTaxInvoicePDF = (order, filterSellerId = null, options = {}
 
     y += rowHeight;
     doc.strokeColor("#e2e8f0").lineWidth(0.5).moveTo(40, y - 2).lineTo(555, y - 2).stroke();
+  } else {
+    // Dedicated FREE Delivery Line Item
+    const rowBg = itemsToRender.length % 2 === 1 ? "#f0fdf4" : "#ffffff";
+    const rowHeight = 30;
+    doc.rect(40, y - 2, 515, rowHeight).fill(rowBg);
+
+    doc
+      .fontSize(7.5)
+      .font("Helvetica-Bold")
+      .fillColor("#047857")
+      .text("Delivery & Shipping Charges [FREE]", 45, y + 2, { width: 155 })
+      .font("Helvetica")
+      .fontSize(6.5)
+      .fillColor("#059669")
+      .text("Order Policy (Free Delivery Promotion)", 45, y + 13, { width: 155 })
+      .fontSize(7)
+      .font("Helvetica-Bold")
+      .fillColor(primaryColor)
+      .text(resolvedSeller.storeName, 202, y + 5, { width: 85, lineBreak: false, ellipsis: true })
+      .fontSize(7.5)
+      .text("NA", 289, y + 5, { width: 26, align: "center" })
+      .font("Helvetica")
+      .fillColor(mutedColor)
+      .text("Rs. 49.00", 317, y + 5, { width: 45, align: "right" })
+      .text("Rs. 0.00", 364, y + 5, { width: 50, align: "right" })
+      .fontSize(6.5)
+      .fillColor("#047857")
+      .text("0% GST (Exempt)", 416, y + 5, { width: 75, align: "right" })
+      .fontSize(7.5)
+      .font("Helvetica-Bold")
+      .fillColor("#047857")
+      .text("FREE (Rs. 0.00)", 475, y + 5, { width: 75, align: "right" });
+
+    y += rowHeight;
+    doc.strokeColor("#bbf7d0").lineWidth(0.5).moveTo(40, y - 2).lineTo(555, y - 2).stroke();
   }
 
   // 6. TOTALS CALCULATION
@@ -1163,11 +1198,12 @@ export const generateTaxInvoicePDF = (order, filterSellerId = null, options = {}
   const freeDeliveryThreshold = Number(order.freeDeliveryThreshold ?? order.minOrderFreeShipping ?? 401);
   const isAboveThreshold = (settlementGross >= freeDeliveryThreshold || calculatedGrandTotal >= freeDeliveryThreshold || Number(order.total || order.totalAmount || 0) >= freeDeliveryThreshold);
   const isAbove400 = isAboveThreshold;
+  const customerShippingPaid = Number(shippingCost || order.shippingFee || order.shippingCost || order.shippingAmount || 0);
   let delivBorneBy = order.deliveryChargeBorneBy;
-  if (!delivBorneBy) {
+  if (!delivBorneBy || customerShippingPaid > 0) {
     if (isAboveThreshold) delivBorneBy = 'admin';
+    else if (customerShippingPaid > 0) delivBorneBy = 'customer';
     else if (order.isDeliveryBorneBySeller || order.deliveryBorneBy === 'seller') delivBorneBy = 'seller';
-    else if (shippingCost > 0 || Number(order.shippingFee ?? order.shippingCost ?? 0) > 0) delivBorneBy = 'customer';
     else delivBorneBy = isThirdParty ? 'seller' : 'admin';
   }
 
@@ -1175,9 +1211,11 @@ export const generateTaxInvoicePDF = (order, filterSellerId = null, options = {}
   let gstOnDeliveryAmount = 0;
   let totalDeliveryDeduction = 0;
   if (!isSettlementReversed && isThirdParty && delivBorneBy === 'seller' && !isAboveThreshold) {
-    deliveryChargeAmount = Number(order.deliveryCharge ?? order.shippingAmount ?? order.shippingCost ?? 40);
-    gstOnDeliveryAmount = Math.round(((deliveryChargeAmount * shippingGstRate) / 100) * 100) / 100;
-    totalDeliveryDeduction = Math.round((deliveryChargeAmount + gstOnDeliveryAmount) * 100) / 100;
+    const rawDeliveryFee = Number(order.deliveryCharge ?? order.shippingAmount ?? order.shippingCost ?? order.shippingFee ?? 49);
+    // Delivery charges are GST INCLUSIVE (no extra GST added on top)
+    totalDeliveryDeduction = Math.round(rawDeliveryFee * 100) / 100;
+    deliveryChargeAmount = Math.round((totalDeliveryDeduction / (1 + shippingGstRate / 100)) * 100) / 100;
+    gstOnDeliveryAmount = Math.round((totalDeliveryDeduction - deliveryChargeAmount) * 100) / 100;
   }
 
   const statutoryDeductions = isSettlementReversed ? 0 : Math.round((marketplaceCommission + gstOnCommission + tdsAmount + gstTcsAmount) * 100) / 100;
@@ -1236,7 +1274,7 @@ export const generateTaxInvoicePDF = (order, filterSellerId = null, options = {}
     if (isThirdParty) {
       doc
         .text("Delivery Charges (Policy):", 48, cY)
-        .text(isSettlementReversed ? "Rs. 0.00 (Waived)" : (totalDeliveryDeduction > 0 ? `-Rs. ${totalDeliveryDeduction.toFixed(2)}` : `FREE (>=Rs. ${freeDeliveryThreshold})`), 200, cY, { width: 85, align: "right" });
+        .text(isSettlementReversed ? "Rs. 0.00 (Waived)" : (totalDeliveryDeduction > 0 ? `-Rs. ${totalDeliveryDeduction.toFixed(2)}` : (delivBorneBy === 'customer' ? "Rs. 0.00 (Cust. Paid)" : `FREE (>=Rs. ${freeDeliveryThreshold})`)), 200, cY, { width: 85, align: "right" });
       cY += 11;
     }
 
@@ -2290,9 +2328,22 @@ export const generateExchangeInvoicePDF = (order, filterSellerId = null) => {
     .text("New Invoice Value", 410, y + 5, { width: 140, align: "right" });
 
   y += 24;
+  let totalReplacementVal = 0;
   itemsToRender.forEach((item, index) => {
     const rawQty = Number(item.quantity || 1);
-    const itemTotal = (item.finalPrice || item.price || 0) * rawQty;
+    const isTargetItem = !order.returnRequest?.itemId || String(item._id || item.id) === String(order.returnRequest.itemId);
+    let unitReplacementPrice = Number(item.finalPrice || item.price || 0);
+    if (isTargetItem) {
+      if (order.returnRequest?.replacementItemPrice && !isNaN(Number(order.returnRequest.replacementItemPrice))) {
+        unitReplacementPrice = Number(order.returnRequest.replacementItemPrice);
+      } else if (priceDiff !== 0) {
+        unitReplacementPrice = adjType === "extra_payment" 
+          ? (unitReplacementPrice + priceDiff) 
+          : (adjType === "partial_refund" ? unitReplacementPrice - Math.abs(priceDiff) : unitReplacementPrice);
+      }
+    }
+    const itemTotal = unitReplacementPrice * rawQty;
+    totalReplacementVal += itemTotal;
     const displayQty = formatInvoiceQuantity(item);
     const hsn = resolveItemHsnCode(item);
 
@@ -2364,7 +2415,7 @@ export const generateExchangeInvoicePDF = (order, filterSellerId = null) => {
     .text("Replacement Item Value:", rightLabelX, rightY, { width: labelWidth, align: "right" })
     .fillColor(primaryColor)
     .font("Helvetica-Bold")
-    .text(`+Rs. ${totalReturnedVal.toFixed(2)}`, rightValX, rightY, { width: valWidth, align: "right" });
+    .text(`+Rs. ${totalReplacementVal.toFixed(2)}`, rightValX, rightY, { width: valWidth, align: "right" });
 
   rightY += 12;
   doc
