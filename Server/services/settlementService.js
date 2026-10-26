@@ -327,16 +327,23 @@ export function calculateSellerSettlement(grossSale, options = {}) {
     }
   }
 
+  const customerShipping = Number(options.shippingFee ?? options.shippingCost ?? options.shippingAmount ?? 0);
+  // In Self Delivery, customer paid delivery charges to the seller / driver, so Gross Sale includes delivery fee
+  const selfDeliveryFee = isSelfDelivery ? customerShipping : 0;
+  const effectiveGrossSale = (isSelfDelivery && customerShipping > 0 && !options.grossIncludesShipping)
+    ? Math.round((gross + customerShipping) * 100) / 100
+    : gross;
+
   // Exact calculations rounded to 2 decimal places (paisa accuracy)
   const commissionAmount = Math.round(((gross * commissionRate) / 100) * 100) / 100;
   const gstOnCommissionAmount = Math.round(((commissionAmount * gstOnCommissionRate) / 100) * 100) / 100;
   // 3. TDS (Sec 194-O): हमेशा 'Gross Value' (टोटल पैसे) पर कटता है (0.1% of Gross Sale).
   // प्रोडक्ट पर GST है या नहीं, इससे TDS को कोई मतलब नहीं है।
-  const tdsAmount = Math.round(((gross * tdsRate) / 100) * 100) / 100;
+  const tdsAmount = Math.round(((effectiveGrossSale * tdsRate) / 100) * 100) / 100;
 
   // 5. Delivery Charges (Rule 2 & Rule 4: Third-Party Delivery - GST Inclusive)
   // ऑर्डर राशि यदि फ्री डिलीवरी थ्रेशोल्ड से अधिक है, तो एडमिन डिलीवरी खर्च वहन करेगा (सेलर से ₹0 कटौती)।
-  const totalOrderValue = Number(options.orderTotal || options.totalAmount || gross);
+  const totalOrderValue = Number(options.orderTotal || options.totalAmount || effectiveGrossSale);
   const freeDeliveryThreshold = Number(
     options.freeDeliveryThreshold ?? 
     options.minOrderFreeShipping ?? 
@@ -348,7 +355,6 @@ export function calculateSellerSettlement(grossSale, options = {}) {
   const isAbove400 = isAboveThreshold; // Backward compatibility alias
   const adminBearsDeliveryAbove400 = options.adminBearsDeliveryAbove400 !== false && isAboveThreshold;
 
-  const customerShipping = Number(options.shippingFee ?? options.shippingCost ?? options.shippingAmount ?? 0);
   let deliveryChargeBorneBy = options.deliveryChargeBorneBy;
   if (!deliveryChargeBorneBy || customerShipping > 0) {
     if (isAboveThreshold && (options.adminBearsDeliveryAbove400 !== false)) {
@@ -397,14 +403,15 @@ export function calculateSellerSettlement(grossSale, options = {}) {
   ) / 100;
 
   // Final Settlement Calculation:
-  // For Rule 1 & 2 (Online payment): Portal collected gross, so it pays seller (Gross - Deductions)
-  // For Rule 3 (COD + Self Delivery): Customer paid seller in cash directly. Portal collected ₹0.
+  // For Rule 1 (Online payment + Self Delivery): Portal collected gross, and pays seller (Gross + Delivery - Deductions)
+  // For Rule 2 (Online payment + Courier): Portal collected gross, pays seller (Gross - Deductions)
+  // For Rule 3 (COD + Self Delivery): Customer paid seller in cash directly (Gross + Delivery). Portal collected ₹0.
   // Seller owes portal (Commission + GST on Commission + TDS).
   // Settlement is negative (-totalDeductions) to be deposited or adjusted in seller wallet.
   // For Rule 4 (COD + Courier): Courier remits cash to portal, so portal pays seller (Gross - Deductions).
   const netSettlement = isRule3CodSelf
     ? Math.round(-totalDeductions * 100) / 100
-    : Math.max(0, Math.round((gross - totalDeductions) * 100) / 100);
+    : Math.max(0, Math.round((effectiveGrossSale - totalDeductions) * 100) / 100);
 
   return {
     ruleCode: rule.code,
@@ -417,7 +424,8 @@ export function calculateSellerSettlement(grossSale, options = {}) {
     isThirdParty,
     isSellerCollectedCash: isRule3CodSelf,
     cashCollectedBy: isRule3CodSelf ? "seller" : "portal",
-    grossSale: gross,
+    grossSale: effectiveGrossSale,
+    selfDeliveryFee,
     productGstRate,
     isTaxFree,
     baseAmount,
