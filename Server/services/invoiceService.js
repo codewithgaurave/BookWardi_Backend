@@ -2596,7 +2596,7 @@ export const generateSellerFinancialStatementPDF = (seller, orders = [], metrics
     .font("Helvetica")
     .fillColor(mutedColor)
     .text("India's Premier School & Education Marketplace", 40, 68)
-    .text("BookVardi Private Limited | GSTIN: 09AAACB1234F1Z9", 40, 80)
+    .text("BookVardi | GSTIN: 09AAACB1234F1Z9", 40, 80)
     .text("Support: finance@bookvardi.in | Helpline: +91 94500 00000", 40, 92);
 
   doc
@@ -2836,7 +2836,7 @@ export const generateSellerFinancialStatementPDF = (seller, orders = [], metrics
     .font("Helvetica")
     .fontSize(7)
     .fillColor(mutedColor)
-    .text("1. This financial statement is an official computer-generated statement issued by BookVardi Private Limited.", 40, y + 10)
+    .text("1. This financial statement is an official computer-generated statement issued by BookVardi.", 40, y + 10)
     .text("2. Net payable balance is scheduled for electronic transfer to the verified vendor bank account via NEFT / IMPS.", 40, y + 18)
     .text("3. Product GST is calculated based on statutory rates (5% on educational attire & textbooks). Platform fee includes 18% GST.", 40, y + 26)
     .text("4. Reconciliation discrepancies must be submitted to vendor accounts desk within 7 working days.", 40, y + 34)
