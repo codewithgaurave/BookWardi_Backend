@@ -8,6 +8,7 @@
  *  1. [225935] OTP: "your BOOK VARDI otp is {#VAR#} . do not share this otp with anyone . -BOOK VARDI"
  *  2. [228314] Order Placed: "DEAR CUSTOMER , YOUR ORDER {#VAR#} HAS BEEN PLACED SUCCESSFULLY . WE WILL NOTIFY YOU ONCE THE SELLER CONFIRMS YOUR ORDER . - BOOK VARDI -BOOK VARDI"
  *  3. [225934] Order Confirmed: "Your BOOK VARDI order {#VAR#} has been confirmed successfully -BOOK VARDI"
+ *  3b. [228930] Order Confirmed with Self Delivery OTP: "Your BOOK VARDI order {#VAR#} is confirmed. Your delivery OTP is {#VAR#}. Please share this OTP with the seller only upon receiving your order. -BOOK VARDI -BOOK VARDI"
  *  4. [228311] Seller New Order Alert: "HELLO SELLER , YOU HAVE RECEIVED A NEW ORDER {#VAR#} ON BOOK VARDI . PLEASE LOGIN TO YOUR SELLER PANEL TO CONFIRM AND PACK THE ORDER . - BOOK VARDI -BOOK VARDI"
  *  5. [228313] Return/Exchange Approved: "YOUR {#VAR#} REQUEST FOR BOOK VARDI ORDER {#VAR#} HAS BEEN APPROVED . OUR COURIER PARTNER WILL CONTACT YOU SOON FOR PICKUP . - BOOK VARDI -BOOK VARDI"
  *  6. [228312] Refund Processed: "REFUND OF RS .{#VAR#} FOR YOUR BOOK VARDI ORDER {#VAR#} HAS BEEN PROCESSED SUCCESSFULLY . REF NO : {#VAR#} . IT WILL CREDIT IN 3-5 BANK DAYS . - BOOK VARDI -BOOK VARDI"
@@ -151,6 +152,28 @@ export const sendFast2SmsOrderConfirmation = async (phone, orderId) => {
     messageId,
     variablesValues: cleanOrderId,
     label: "Order Confirmation SMS"
+  });
+};
+
+/**
+ * 3b. Template ID 228930: Order Confirmed with Self Delivery OTP
+ * "Your BOOK VARDI order {#VAR#} is confirmed. Your delivery OTP is {#VAR#}. Please share this OTP with the seller only upon receiving your order. -BOOK VARDI -BOOK VARDI"
+ */
+export const sendFast2SmsOrderConfirmedWithOtp = async (phone, orderId, deliveryOtp) => {
+  const messageId = process.env.FAST2SMS_ORDER_CONFIRMED_SELF_DELIVERY_MESSAGE_ID || "228930";
+  const cleanOrderId = String(orderId || "").trim();
+  const cleanOtp = String(deliveryOtp || "").trim();
+  if (!cleanOrderId) {
+    return { success: false, message: "Order ID is required" };
+  }
+  if (!cleanOtp) {
+    return { success: false, message: "Delivery OTP is required" };
+  }
+  return dispatchFast2Sms({
+    phone,
+    messageId,
+    variablesValues: `${cleanOrderId}|${cleanOtp}`,
+    label: "Order Confirmed (Self Delivery with OTP) SMS"
   });
 };
 
@@ -425,8 +448,29 @@ export const sendOrderStatusSms = async (order, newStatus, extraData = {}) => {
 
       case "confirmed":
       case "order_confirmed":
-      case "accepted":
+      case "accepted": {
+        const isSelfDelivery = Boolean(
+          extraData.deliveryMode === "self_delivery" ||
+          extraData.deliveryMode === "self" ||
+          order.deliveryMode === "self_delivery" ||
+          order.deliveryMode === "self" ||
+          order.selfDeliveryDetails?.deliveryPartnerToken ||
+          order.selfDeliveryDetails?.deliveryPersonName ||
+          (Array.isArray(order.items) && order.items.some(it => it.deliveryType === "self" || it.deliveryType === "self_delivery"))
+        );
+        const deliveryOtp = String(
+          extraData.deliveryOtp ||
+          order.deliveryOtp ||
+          order.selfDeliveryDetails?.deliveryOtp ||
+          (Array.isArray(order.items) && order.items[0]?.deliveryOtp) ||
+          ""
+        ).trim();
+
+        if (isSelfDelivery && deliveryOtp) {
+          return await sendFast2SmsOrderConfirmedWithOtp(cleanPhone, orderId, deliveryOtp);
+        }
         return await sendFast2SmsOrderConfirmation(cleanPhone, orderId);
+      }
 
       case "shipped":
       case "dispatched": {
@@ -480,6 +524,7 @@ export default {
   sendFast2SmsOtp,
   sendFast2SmsOrderPlaced,
   sendFast2SmsOrderConfirmation,
+  sendFast2SmsOrderConfirmedWithOtp,
   sendFast2SmsSellerNewOrder,
   sendFast2SmsOrderShippedWithTracking,
   sendFast2SmsOrderShipped,

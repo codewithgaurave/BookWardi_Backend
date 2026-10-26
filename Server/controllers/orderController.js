@@ -2666,10 +2666,37 @@ export const updateOrder = async (req, res) => {
     if (req.body.trackingUrl) existingOrder.trackingUrl = req.body.trackingUrl;
     if (req.body.sellerDetails) existingOrder.sellerDetails = req.body.sellerDetails;
 
-    if (req.body.selfDeliveryDetails) {
-      const existingOtp = existingOrder.deliveryOtp || existingOrder.selfDeliveryDetails?.deliveryOtp;
-      if (existingOtp && !req.body.selfDeliveryDetails.deliveryOtp) {
-        req.body.selfDeliveryDetails.deliveryOtp = existingOtp;
+    const effectiveDeliveryMode = String(req.body.deliveryMode || existingOrder.deliveryMode || "").toLowerCase();
+    const effectiveCourier = String(req.body.courierName || existingOrder.courierName || "").trim();
+    const hasCourier = Boolean(effectiveCourier && effectiveCourier !== "N/A" && effectiveCourier !== "null");
+    const isExplicitSelf = effectiveDeliveryMode === "self_delivery" || Boolean(
+      req.body.selfDeliveryDetails?.deliveryPersonName ||
+      req.body.selfDeliveryDetails?.deliveryPartnerToken ||
+      existingOrder.selfDeliveryDetails?.deliveryPersonName ||
+      existingOrder.selfDeliveryDetails?.deliveryPartnerToken
+    );
+    const isExplicitThirdParty = effectiveDeliveryMode === "third_party" || (hasCourier && !isExplicitSelf);
+
+    // Ensure 4-digit Delivery OTP is assigned whenever order is confirmed or fulfilled via Self Delivery
+    if (isExplicitSelf) {
+      let activeOtp = String(
+        req.body.deliveryOtp ||
+        req.body.selfDeliveryDetails?.deliveryOtp ||
+        existingOrder.deliveryOtp ||
+        existingOrder.selfDeliveryDetails?.deliveryOtp ||
+        ""
+      ).trim();
+
+      if (!/^\d{4}$/.test(activeOtp)) {
+        activeOtp = Math.floor(1000 + Math.random() * 9000).toString();
+      }
+
+      existingOrder.deliveryOtp = activeOtp;
+      if (!existingOrder.selfDeliveryDetails) existingOrder.selfDeliveryDetails = {};
+      existingOrder.selfDeliveryDetails.deliveryOtp = activeOtp;
+
+      if (req.body.selfDeliveryDetails) {
+        req.body.selfDeliveryDetails.deliveryOtp = activeOtp;
       }
     }
 
@@ -2712,12 +2739,6 @@ export const updateOrder = async (req, res) => {
     }
 
     // Dynamically recalculate and synchronize settlementRule across order and items based on resolved paymentMethod and deliveryMode
-    const effectiveDeliveryMode = String(existingOrder.deliveryMode || req.body.deliveryMode || "").toLowerCase();
-    const effectiveCourier = String(existingOrder.courierName || req.body.courierName || "").trim();
-    const hasCourier = Boolean(effectiveCourier && effectiveCourier !== "N/A" && effectiveCourier !== "null");
-    const isExplicitSelf = effectiveDeliveryMode === "self_delivery" || Boolean(existingOrder.selfDeliveryDetails?.deliveryPersonName || existingOrder.selfDeliveryDetails?.deliveryPartnerToken);
-    const isExplicitThirdParty = effectiveDeliveryMode === "third_party" || (hasCourier && !isExplicitSelf);
-
     const isCod = String(existingOrder.paymentMethod || "").toUpperCase().includes("COD");
     const dynamicSettlementRule = isCod
       ? (isExplicitThirdParty ? "COD_THIRD_PARTY_DELIVERY" : "COD_SELF_DELIVERY")
@@ -2741,18 +2762,34 @@ export const updateOrder = async (req, res) => {
             item.selfDeliveryDetails = undefined;
           }
         }
-        if (req.body.selfDeliveryDetails && isExplicitSelf) {
-          item.selfDeliveryDetails = existingOrder.selfDeliveryDetails;
+        if (isExplicitSelf) {
+          item.deliveryType = "self_delivery";
+          item.deliveryOtp = existingOrder.deliveryOtp;
+          item.selfDeliveryDetails = {
+            ...(item.selfDeliveryDetails || {}),
+            ...(existingOrder.selfDeliveryDetails || {})
+          };
         }
       });
     } else if (itemToUpdate) {
       itemToUpdate.settlementRule = dynamicSettlementRule;
+      if (isExplicitSelf) {
+        itemToUpdate.deliveryType = "self_delivery";
+        itemToUpdate.deliveryOtp = existingOrder.deliveryOtp;
+        if (existingOrder.selfDeliveryDetails) {
+          itemToUpdate.selfDeliveryDetails = {
+            ...(itemToUpdate.selfDeliveryDetails || {}),
+            ...existingOrder.selfDeliveryDetails
+          };
+        }
+      }
     }
 
     existingOrder.markModified("items");
     existingOrder.markModified("selfDeliveryDetails");
     existingOrder.markModified("thirdPartyDetails");
     existingOrder.markModified("settlementRule");
+    existingOrder.markModified("deliveryOtp");
     existingOrder.markModified("overallStatus");
     existingOrder.markModified("status");
     await existingOrder.save();
@@ -2767,13 +2804,22 @@ export const updateOrder = async (req, res) => {
       console.warn("Auto-reconcile on updateOrder warning:", reconcileErr.message);
     }
 
-    // Fast2SMS DLT Status Update SMS (Shipped, Out for Delivery, Delivered, Cancelled)
+    // Fast2SMS DLT Status Update SMS (Confirmed, Shipped, Out for Delivery, Delivered, Cancelled)
     try {
-      if (newStatusKey && newStatusKey !== previousStatusKey) {
-        sendOrderStatusSms(existingOrder, newStatusKey, {
-          trackingUrl: existingOrder.trackingUrl || existingOrder.selfDeliveryDetails?.trackingUrl,
-          refundAmount: existingOrder.refundDetails?.amount || existingOrder.totalAmount
-        }).catch(err => console.warn("⚠️ [FAST2SMS] Order status SMS error:", err.message));
+      const isConfirmedState = newStatusKey === "confirmed" || String(existingOrder.overallStatus || "").toLowerCase() === "confirmed";
+      const isNewlySwitchingToSelf = isExplicitSelf && (req.body.deliveryMode === "self_delivery" || req.body.deliveryType === "self_delivery");
+      const shouldSendStatusSms = (newStatusKey && newStatusKey !== previousStatusKey) || (isNewlySwitchingToSelf && isConfirmedState);
+
+      if (shouldSendStatusSms) {
+        const smsStatusTarget = newStatusKey || (isConfirmedState ? "confirmed" : "");
+        if (smsStatusTarget) {
+          sendOrderStatusSms(existingOrder, smsStatusTarget, {
+            trackingUrl: existingOrder.trackingUrl || existingOrder.selfDeliveryDetails?.trackingUrl,
+            refundAmount: existingOrder.refundDetails?.amount || existingOrder.totalAmount,
+            deliveryMode: effectiveDeliveryMode,
+            deliveryOtp: existingOrder.deliveryOtp || existingOrder.selfDeliveryDetails?.deliveryOtp
+          }).catch(err => console.warn("⚠️ [FAST2SMS] Order status SMS error:", err.message));
+        }
       }
     } catch (smsErr) {}
 
