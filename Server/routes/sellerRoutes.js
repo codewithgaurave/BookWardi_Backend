@@ -42,6 +42,7 @@ import {
   resendSellerDeliveryBoyWhatsApp
 } from "../controllers/sellerOrderController.js";
 import { updateReturnExchangeStatus } from "../controllers/orderController.js";
+import { downloadSellerFinancialStatement } from "../controllers/adminSellerController.js";
 import {
   getSellerOffers,
   createSellerOffer,
@@ -183,6 +184,7 @@ router.patch("/promotions/:id/status", authenticateSeller, toggleSellerOfferStat
 // ==========================================
 router.get("/wallet", authenticateSeller, getSellerWalletOverview);
 router.post("/payout-request", authenticateSeller, requestPayout);
+router.get("/finance-statement/pdf", authenticateSeller, downloadSellerFinancialStatement);
 
 import {
   getSellerReviews,

@@ -1571,34 +1571,29 @@ export const generateCreditNotePDF = (order, filterSellerId = null) => {
   const returnStatus = String(order.returnRequest?.status || "").toLowerCase();
 
   const isExchange = reqType === "exchange" || orderOverallStatus.includes("exchange") || returnStatus.includes("exchange");
-
-  // UNIFIED INVOICING: An Exchange order must generate ONE statutory document across all portals:
-  // the EXCHANGE TAX INVOICE (which already details the returned item credit & fresh replacement debit).
-  // A separate Credit Note must NEVER be issued for an exchange!
-  if (isExchange) {
-    return generateExchangeInvoicePDF(order, filterSellerId);
-  }
-
   const isReturn = reqType === "return" || orderOverallStatus.includes("return") || returnStatus.includes("return") || orderOverallStatus === "product_received" || orderOverallStatus === "product_return_received" || orderOverallStatus.includes("refund");
   const isCancelled = orderOverallStatus === "cancelled" || Boolean(order.cancelledAt);
 
-  // Statutory Requirement: Credit Note can ONLY be generated after Return is accepted/approved by seller
-  if (isReturn && !isCancelled) {
+  // Statutory Requirement: Credit Note can ONLY be generated after Return/Exchange is accepted/approved by seller
+  if ((isReturn || isExchange) && !isCancelled) {
     const acceptedStatuses = [
-      'approved', 'return_approved', 'pickup_scheduled',
-      'product_received', 'product_return_received',
+      'approved', 'return_approved', 'exchange_approved', 'exchange_dispatched', 'exchanged', 'completed',
+      'pickup_scheduled', 'product_received', 'product_return_received',
       'refund_initiated', 'refund_processed', 'refund_completed', 'refunded'
     ];
     const currentRetStatus = String(order.returnRequest?.status || order.overallStatus || order.status || '').toLowerCase().trim().replace(/[\s-]+/g, '_');
     const isAccepted = acceptedStatuses.some(s => currentRetStatus.includes(s));
     if (!isAccepted) {
-      throw new Error("Credit Note cannot be generated until the Return request has been approved/accepted by the store.");
+      throw new Error("Credit Note cannot be generated until the Return / Exchange request has been approved/accepted by the store.");
     }
   }
 
   let creditNoteTypeHeading = "TAX CREDIT NOTE";
   let creditNoteSubhead = "Statutory GST Reversal under Section 34 of CGST Act, 2017";
-  if (isReturn) {
+  if (isExchange) {
+    creditNoteTypeHeading = "TAX CREDIT NOTE (EXCHANGE RETURN)";
+    creditNoteSubhead = "Issued for Returned Goods Reversal under Section 34 of CGST Act, 2017";
+  } else if (isReturn) {
     creditNoteTypeHeading = "TAX CREDIT NOTE (SALES RETURN)";
     creditNoteSubhead = "Issued for Returned Goods & Reversal of Output Tax Liability";
   } else if (isCancelled) {
@@ -1800,15 +1795,15 @@ export const generateCreditNotePDF = (order, filterSellerId = null) => {
 
   let itemsToRender = Array.isArray(order.items) ? [...order.items] : [];
 
-  // Item-level filtering for returns
+  // Item-level filtering for returns / exchange
   const returnItemId = order.returnRequest?.itemId;
-  if (isReturn && returnItemId) {
+  if ((isReturn || isExchange) && returnItemId) {
     const matchedItem = itemsToRender.find((it) => String(it._id || it.id) === String(returnItemId));
     if (matchedItem) {
       itemsToRender = [matchedItem];
     }
-  } else if (isReturn && itemsToRender.some((it) => String(it.status || "").toLowerCase().includes("return"))) {
-    itemsToRender = itemsToRender.filter((it) => String(it.status || "").toLowerCase().includes("return"));
+  } else if ((isReturn || isExchange) && itemsToRender.some((it) => String(it.status || "").toLowerCase().includes("return") || String(it.status || "").toLowerCase().includes("exchange"))) {
+    itemsToRender = itemsToRender.filter((it) => String(it.status || "").toLowerCase().includes("return") || String(it.status || "").toLowerCase().includes("exchange"));
   }
 
   // Seller filtering
@@ -1916,7 +1911,12 @@ export const generateCreditNotePDF = (order, filterSellerId = null) => {
   let refundedShipping = 0;
   let discountAdjusted = totalDiscounts;
 
-  if (isReturn) {
+  if (isExchange) {
+    // In exchange, credit note reverses the returned item value (credited towards the new replacement)
+    refundedShipping = 0;
+    discountAdjusted = 0;
+    netCreditAmount = subtotal;
+  } else if (isReturn) {
     // Delivery charges are strictly NON-REFUNDABLE on sales returns (delivery service was already performed)
     refundedShipping = 0;
     const eligibleItemRefund = Math.max(0, subtotal - discountAdjusted);

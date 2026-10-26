@@ -411,7 +411,7 @@ export const updateSellerCommission = async (req, res) => {
 // Download Official Seller Financial & Settlement Statement PDF
 export const downloadSellerFinancialStatement = async (req, res) => {
   try {
-    const { id } = req.params;
+    const id = req.params.id || req.seller?._id || req.user?.id || req.user?._id || req.headers["x-seller-id"];
 
     const seller = await findSellerByIdOrQuery(id, "-password");
     if (!seller) {

@@ -85,7 +85,7 @@ export const requireAdminPermission = (tabId, requiredLevel = "viewer") => {
 // Seller-Only Authenticator (Resolves seller account for active authenticated user)
 export const authenticateSeller = async (req, res, next) => {
   const authHeader = req.headers["authorization"];
-  const rawToken = authHeader && authHeader.split(" ")[1];
+  const rawToken = (authHeader && authHeader.split(" ")[1]) || req.query.token;
   const token = (rawToken && rawToken !== "undefined" && rawToken !== "null" && rawToken !== "Bearer") ? rawToken.trim() : null;
 
   let authenticatedUser = null;
@@ -97,8 +97,8 @@ export const authenticateSeller = async (req, res, next) => {
       try {
         authenticatedUser = jwt.verify(token, JWT_SECRET);
       } catch (e) {
-        const fallbackSellerId = req.headers["x-seller-id"];
-        const fallbackUserPhone = req.headers["x-user-phone"] || req.headers["x-seller-phone"];
+        const fallbackSellerId = req.headers["x-seller-id"] || req.query.sellerId;
+        const fallbackUserPhone = req.headers["x-user-phone"] || req.headers["x-seller-phone"] || req.query.phone;
         if (!fallbackSellerId && !fallbackUserPhone) {
           return res.status(401).json({ message: "Invalid or expired authentication token", code: "TOKEN_EXPIRED" });
         }
@@ -108,8 +108,8 @@ export const authenticateSeller = async (req, res, next) => {
 
   // If no valid authenticated user from token, check fallback headers in development / mobile session
   if (!authenticatedUser) {
-    const fallbackSellerId = req.headers["x-seller-id"];
-    const fallbackUserPhone = req.headers["x-user-phone"] || req.headers["x-seller-phone"];
+    const fallbackSellerId = req.headers["x-seller-id"] || req.query.sellerId;
+    const fallbackUserPhone = req.headers["x-user-phone"] || req.headers["x-seller-phone"] || req.query.phone;
     if (fallbackSellerId && mongoose.Types.ObjectId.isValid(fallbackSellerId)) {
       authenticatedUser = { id: fallbackSellerId, role: "seller" };
     } else if (fallbackUserPhone) {
