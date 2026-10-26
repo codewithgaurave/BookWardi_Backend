@@ -1183,6 +1183,18 @@ export const generateTaxInvoicePDF = (order, filterSellerId = null, options = {}
   
   const settlementGross = Math.max(0, Math.round((subtotal - totalDiscounts) * 100) / 100);
 
+  // Statutory Taxable Value of items (excluding GST) under Section 52(1) of CGST Act
+  const itemsTaxableSum = (itemsToRender || []).reduce((sum, it) => {
+    const rawQty = Number(it.quantity || 1);
+    const unitP = Number(it.originalPrice ?? it.price ?? it.finalPrice ?? 0);
+    const grossP = Math.round((unitP * rawQty) * 100) / 100;
+    const disc = Number(it.offerDiscount || it.discount || 0);
+    const netP = Math.max(0, grossP - disc);
+    const rate = getProductGstRate(it);
+    return sum + (rate > 0 ? Math.round((netP / (1 + rate / 100)) * 100) / 100 : netP);
+  }, 0);
+  const settlementTaxable = itemsTaxableSum > 0 ? itemsTaxableSum : settlementGross;
+
   const marketplaceCommission = isSettlementReversed ? 0 : Math.round((settlementGross * (marketplaceCommissionRate / 100)) * 100) / 100;
   const gstOnCommission = isSettlementReversed ? 0 : Math.round((marketplaceCommission * 0.18) * 100) / 100;
   const tdsAmount = isSettlementReversed ? 0 : Math.round((settlementGross * 0.001) * 100) / 100;
@@ -1193,7 +1205,8 @@ export const generateTaxInvoicePDF = (order, filterSellerId = null, options = {}
     return r === 0 || cat.includes('book');
   });
   const tcsRate = (isSettlementReversed || isRule3CodSelf || isTaxFreeOrder) ? 0 : 0.5;
-  const gstTcsAmount = (isSettlementReversed || isRule3CodSelf || isTaxFreeOrder) ? 0 : Math.round(((settlementGross * tcsRate) / 100) * 100) / 100;
+  // GST TCS under Sec 52 of CGST Act: strictly on Taxable Value (net value of taxable supplies), NOT gross!
+  const gstTcsAmount = (isSettlementReversed || isRule3CodSelf || isTaxFreeOrder) ? 0 : Math.round(((settlementTaxable * tcsRate) / 100) * 100) / 100;
 
   const freeDeliveryThreshold = Number(order.freeDeliveryThreshold ?? order.minOrderFreeShipping ?? 401);
   const isAboveThreshold = (settlementGross >= freeDeliveryThreshold || calculatedGrandTotal >= freeDeliveryThreshold || Number(order.total || order.totalAmount || 0) >= freeDeliveryThreshold);
@@ -1569,6 +1582,20 @@ export const generateCreditNotePDF = (order, filterSellerId = null) => {
   const isReturn = reqType === "return" || orderOverallStatus.includes("return") || returnStatus.includes("return") || orderOverallStatus === "product_received" || orderOverallStatus === "product_return_received" || orderOverallStatus.includes("refund");
   const isCancelled = orderOverallStatus === "cancelled" || Boolean(order.cancelledAt);
 
+  // Statutory Requirement: Credit Note can ONLY be generated after Return is accepted/approved by seller
+  if (isReturn && !isCancelled) {
+    const acceptedStatuses = [
+      'approved', 'return_approved', 'pickup_scheduled',
+      'product_received', 'product_return_received',
+      'refund_initiated', 'refund_processed', 'refund_completed', 'refunded'
+    ];
+    const currentRetStatus = String(order.returnRequest?.status || order.overallStatus || order.status || '').toLowerCase().trim().replace(/[\s-]+/g, '_');
+    const isAccepted = acceptedStatuses.some(s => currentRetStatus.includes(s));
+    if (!isAccepted) {
+      throw new Error("Credit Note cannot be generated until the Return request has been approved/accepted by the store.");
+    }
+  }
+
   let creditNoteTypeHeading = "TAX CREDIT NOTE";
   let creditNoteSubhead = "Statutory GST Reversal under Section 34 of CGST Act, 2017";
   if (isReturn) {
@@ -1885,21 +1912,23 @@ export const generateCreditNotePDF = (order, filterSellerId = null) => {
   const totalDiscounts = discountAmount + pointsDiscount;
 
   // Determine Net Credit Amount & Component Breakdown
-  const isFullOrderReversal = !isReturn || itemsToRender.length === (order.items?.length || 1);
   let netCreditAmount = subtotal;
   let refundedShipping = 0;
-  let discountAdjusted = 0;
+  let discountAdjusted = totalDiscounts;
 
-  if (isFullOrderReversal) {
+  if (isReturn) {
+    // Delivery charges are strictly NON-REFUNDABLE on sales returns (delivery service was already performed)
+    refundedShipping = 0;
+    const eligibleItemRefund = Math.max(0, subtotal - discountAdjusted);
+    const explicitRefund = Number(order.returnRequest?.refundAmount || order.refundDetails?.refundAmount || 0);
+    netCreditAmount = explicitRefund > 0 ? explicitRefund : eligibleItemRefund;
+  } else if (isCancelled) {
+    // Pre-dispatch order cancellation: full refund including shipping
     refundedShipping = shippingCost;
-    discountAdjusted = totalDiscounts;
     netCreditAmount = Number(order.total || order.totalAmount || (subtotal + refundedShipping - discountAdjusted));
   } else {
     const explicitRefund = Number(order.returnRequest?.refundAmount || order.refundDetails?.refundAmount || 0);
     netCreditAmount = explicitRefund > 0 ? explicitRefund : subtotal;
-    if (explicitRefund > subtotal && shippingCost > 0) {
-      refundedShipping = Math.min(shippingCost, explicitRefund - subtotal);
-    }
   }
 
   // Statutory GST Reversal Audit (Left Card)
@@ -1966,6 +1995,15 @@ export const generateCreditNotePDF = (order, filterSellerId = null) => {
       .fillColor(primaryColor)
       .font("Helvetica-Bold")
       .text(`Rs. ${refundedShipping.toFixed(2)}`, rightValX, rightY, { width: valWidth, align: "right" });
+  } else if (isReturn && shippingCost > 0) {
+    rightY += 12;
+    doc
+      .font("Helvetica")
+      .fillColor(mutedColor)
+      .text("Original Delivery Charges:", rightLabelX, rightY, { width: labelWidth, align: "right" })
+      .fillColor("#b91c1c")
+      .font("Helvetica-Bold")
+      .text("Non-Refundable (Rs. 0.00)", rightValX, rightY, { width: valWidth, align: "right" });
   }
 
   if (discountAdjusted > 0) {

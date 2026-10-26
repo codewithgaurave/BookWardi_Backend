@@ -1242,6 +1242,7 @@ export const createOrder = async (req, res) => {
     };
 
     // Auto-populate productId, sellerId, sellerName, storeName, and GST on order items from Product & User collections
+    const allocatedStockMap = {};
     for (const item of orderItems) {
       // 1. Sanitize image safely (prevent array or object CastError)
       if (Array.isArray(item.image)) {
@@ -1271,7 +1272,8 @@ export const createOrder = async (req, res) => {
       // 2. Sanitize price, quantity, discount & total
       const basePrice = item.price !== undefined ? Number(item.price) : (item.finalPrice !== undefined ? Number(item.finalPrice) : 0);
       item.price = Number(basePrice) || 0;
-      item.quantity = Math.max(1, Number(item.quantity) || 1);
+      const parsedQty = Number(item.quantity);
+      item.quantity = (!isNaN(parsedQty) && parsedQty > 0) ? parsedQty : 1;
       item.offerDiscount = Number(item.offerDiscount !== undefined ? item.offerDiscount : (item.discount || 0)) || 0;
       item.discount = item.offerDiscount;
       const itemGross = Math.round(item.price * item.quantity * 100) / 100;
@@ -1398,6 +1400,62 @@ export const createOrder = async (req, res) => {
         item.quantity = Math.max(minMeter, Math.round(Number(item.quantity || minMeter) * 100) / 100);
       } else {
         item.quantity = Math.max(1, Math.round(Number(item.quantity) || 1));
+      }
+
+      // Check stock availability & prevent overselling beyond actual inventory
+      let availableStock = Infinity;
+      const itemSize = String(item.size || item.selectedSize || "").trim();
+
+      if (prod) {
+        if (itemSize && Array.isArray(prod.sizeVariants) && prod.sizeVariants.length > 0) {
+          const variant = prod.sizeVariants.find(
+            (v) => String(v.size || v.measureValue || "").trim().toLowerCase() === itemSize.toLowerCase()
+          );
+          if (variant) {
+            const vStock = variant.stockQuantity !== undefined ? variant.stockQuantity : variant.stock;
+            if (vStock !== undefined && vStock !== null && vStock !== "") {
+              availableStock = Number(vStock);
+            }
+          }
+        }
+
+        if (availableStock === Infinity) {
+          const pStock = prod.stockQuantity !== undefined ? prod.stockQuantity : prod.stock;
+          if (pStock !== undefined && pStock !== null && pStock !== "") {
+            availableStock = Number(pStock);
+          }
+        }
+      } else {
+        let kit = await findKitByIdOrCustomId(searchId);
+        if (!kit && item.name) {
+          const cleanItemName = item.name.replace(/\s*\([^)]*\)/g, "").trim();
+          kit = await Kit.findOne({
+            title: { $regex: new RegExp(cleanItemName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i") }
+          });
+        }
+        if (kit) {
+          const kStock = kit.stock !== undefined ? kit.stock : kit.stockQuantity;
+          if (kStock !== undefined && kStock !== null && kStock !== "") {
+            availableStock = Number(kStock);
+          }
+        }
+      }
+
+      if (availableStock !== Infinity && !isNaN(availableStock)) {
+        const unitLabel = isMeterBased ? "meter(s)" : "unit(s)";
+        const stockKey = `${String(prod?._id || searchId)}_${itemSize.toLowerCase()}`;
+        allocatedStockMap[stockKey] = Math.round(((allocatedStockMap[stockKey] || 0) + Number(item.quantity)) * 100) / 100;
+
+        if (availableStock <= 0) {
+          return res.status(400).json({
+            message: `"${item.name}"${itemSize ? ` (${itemSize})` : ''} is currently out of stock. Please remove it from your order.`
+          });
+        }
+        if (allocatedStockMap[stockKey] > availableStock) {
+          return res.status(400).json({
+            message: `Insufficient stock for "${item.name}"${itemSize ? ` (${itemSize})` : ''}. Only ${availableStock} ${unitLabel} available in stock, but ${allocatedStockMap[stockKey]} ${unitLabel} was requested.`
+          });
+        }
       }
 
       // Recalculate item totals with final validated quantity
@@ -3174,6 +3232,28 @@ export const downloadCreditNote = async (req, res) => {
     const enrichedOrder = (await enrichOrdersWithSellerAndConsumer([orderObj]))[0];
 
     const filterSellerId = req.query.sellerId || req.headers["x-seller-id"] || null;
+
+    const reqType = String(enrichedOrder.returnRequest?.type || enrichedOrder.returnRequest?.requestType || "").toLowerCase();
+    const orderOverallStatus = String(enrichedOrder.overallStatus || enrichedOrder.status || "").toLowerCase().trim().replace(/[\s-]+/g, '_');
+    const returnStatus = String(enrichedOrder.returnRequest?.status || "").toLowerCase().trim().replace(/[\s-]+/g, '_');
+    const isReturn = reqType === "return" || orderOverallStatus.includes("return") || returnStatus.includes("return");
+    const isCancelled = orderOverallStatus === "cancelled" || Boolean(enrichedOrder.cancelledAt);
+
+    // Statutory Check: Credit Note is generated ONLY after return is accepted / approved by store
+    if (isReturn && !isCancelled) {
+      const acceptedStatuses = [
+        'approved', 'return_approved', 'pickup_scheduled',
+        'product_received', 'product_return_received',
+        'refund_initiated', 'refund_processed', 'refund_completed', 'refunded'
+      ];
+      const isAccepted = acceptedStatuses.some(s => orderOverallStatus.includes(s) || returnStatus.includes(s));
+      if (!isAccepted) {
+        return res.status(400).json({
+          message: "Credit Note will be generated after the return request is accepted/approved by the seller or store."
+        });
+      }
+    }
+
     const { generateCreditNotePDF } = await import("../services/invoiceService.js");
     const isExchangeOrder = String(enrichedOrder.returnRequest?.type || enrichedOrder.returnRequest?.requestType || '').toLowerCase() === 'exchange' ||
       String(enrichedOrder.overallStatus || enrichedOrder.status || '').toLowerCase().includes('exchange');
@@ -3577,9 +3657,18 @@ export const requestReturnExchange = async (req, res) => {
       }
     }
 
+    const targetItemRefund = targetItem
+      ? Math.max(0, Number(targetItem.finalPrice ?? targetItem.price ?? 0) * Number(targetItem.quantity || 1))
+      : Math.max(0, Number(order.subtotal || order.total || 0) - Number(order.discountAmount ?? order.discount ?? 0));
+    const calculatedRefundAmount = type === "return"
+      ? targetItemRefund
+      : (type === "exchange" && priceAdjustmentType === "partial_refund" ? Math.abs(Number(priceDifference)) : 0);
+
     if (type === "return" || (type === "exchange" && priceAdjustmentType === "partial_refund")) {
       order.refundDetails = {
         ...formattedRefundDetails,
+        refundAmount: calculatedRefundAmount,
+        amount: calculatedRefundAmount,
         submittedAt: new Date()
       };
       order.refundStatus = type === "return" ? "Refund Requested" : "Partial Refund Requested";
@@ -3601,6 +3690,7 @@ export const requestReturnExchange = async (req, res) => {
       priceAdjustmentType: priceAdjustmentType || "none",
       originalItemPrice: Number(originalItemPrice) || 0,
       replacementItemPrice: Number(replacementItemPrice) || 0,
+      refundAmount: calculatedRefundAmount,
       refundMethod: refundMethod || "Original Payment Method",
       refundDetails: formattedRefundDetails,
       requestedAt: new Date(),

@@ -265,8 +265,8 @@ router.post("/bulk-order", async (req, res) => {
       buyerAdvanceNote: req.body.buyerAdvanceNote || "",
       advancePaymentStatus: req.body.advancePaymentStatus || "pending",
       advanceReceiptNumber: "",
-      assignmentMode: req.body.assignmentMode || "broadcast",
-      status: "published"
+      assignmentMode: req.body.assignmentMode || "unassigned",
+      status: req.body.status || "pending"
     });
 
     await bulkOrder.save();
@@ -280,24 +280,9 @@ router.post("/bulk-order", async (req, res) => {
       });
     } catch (rtErr) {}
 
-    // Dispatch Fast2SMS DLT Template 228310: Bulk School Inquiry Live for Bidding
-    try {
-      Seller.find({ status: "active", phone: { $exists: true, $ne: "" } })
-        .select("phone mobile")
-        .limit(20)
-        .lean()
-        .then((sellers) => {
-          const sellerPhones = [...new Set((sellers || []).map(s => s.phone || s.mobile).filter(Boolean))];
-          sellerPhones.forEach(p => {
-            sendFast2SmsBulkSchoolInquiryLive(p).catch(() => {});
-          });
-        })
-        .catch(() => {});
-    } catch (smsErr) {}
-
     return res.status(201).json({
       success: true,
-      message: "School Bulk Order inquiry submitted successfully and broadcast to sellers!",
+      message: "School Bulk Order inquiry submitted successfully! Awaiting Admin review & distribution.",
       referenceId: bulkOrder.referenceId,
       bulkOrder
     });

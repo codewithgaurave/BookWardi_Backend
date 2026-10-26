@@ -8,7 +8,8 @@ import { broadcastRealtimeEvent } from "../services/realtimeService.js";
 import { 
   sendFast2SmsPaymentSuccess, 
   sendFast2SmsOrderConfirmation, 
-  sendOrderStatusSms 
+  sendOrderStatusSms,
+  sendFast2SmsBulkSchoolInquiryLive 
 } from "../services/smsService.js";
 
 // Initialize Razorpay instance for School Bulk Orders
@@ -576,6 +577,30 @@ export const distributeSchoolOrder = async (req, res) => {
       });
     } catch (rtErr) {}
 
+    // Dispatch SMS notification to seller(s) now that Admin has actively distributed this order
+    try {
+      if (assignmentMode === "direct" && bulkOrder.sellerId) {
+        Seller.findById(bulkOrder.sellerId).select("phone mobile").lean().then(s => {
+          const ph = s?.phone || s?.mobile;
+          if (ph) sendFast2SmsBulkSchoolInquiryLive(ph).catch(() => {});
+        }).catch(() => {});
+      } else if (assignmentMode === "selected" && Array.isArray(bulkOrder.invitedSellerIds) && bulkOrder.invitedSellerIds.length > 0) {
+        Seller.find({ _id: { $in: bulkOrder.invitedSellerIds } }).select("phone mobile").lean().then(sellers => {
+          (sellers || []).forEach(s => {
+            const ph = s?.phone || s?.mobile;
+            if (ph) sendFast2SmsBulkSchoolInquiryLive(ph).catch(() => {});
+          });
+        }).catch(() => {});
+      } else if (assignmentMode === "broadcast") {
+        Seller.find({ status: "active", phone: { $exists: true, $ne: "" } }).select("phone mobile").limit(20).lean().then(sellers => {
+          const sellerPhones = [...new Set((sellers || []).map(s => s.phone || s.mobile).filter(Boolean))];
+          sellerPhones.forEach(p => {
+            sendFast2SmsBulkSchoolInquiryLive(p).catch(() => {});
+          });
+        }).catch(() => {});
+      }
+    } catch (smsErr) {}
+
     const updatedOrder = await SchoolBulkOrder.findById(bulkOrder._id)
       .populate("sellerId", "storeName name phone email businessName")
       .populate("invitedSellerIds", "storeName name phone email businessName");
@@ -634,22 +659,15 @@ export const getSellerSchoolOrders = async (req, res) => {
 
     const matchIds = [...validObjectIds, ...stringIds];
 
-    // Global broadcast / RFQ orders (visible to all active sellers)
+    // Global broadcast / RFQ orders (visible to all active sellers ONLY after Admin has published/broadcasted them)
     const broadcastCondition = {
       $or: [
-        { assignmentMode: "broadcast" },
-        { isGlobalRfq: true },
-        { isGlobal: true },
-        { isPublic: true },
-        { assignmentMode: "unassigned" },
-        { assignmentMode: "open" },
-        { assignmentMode: "" },
-        { assignmentMode: { $exists: false } },
-        { assignmentMode: null },
-        // Any order that is not strictly private direct and whose prepayment is not confirmed remains open to all sellers
-        { assignmentMode: { $ne: "direct" }, advancePaymentStatus: { $ne: "paid" } }
+        { assignmentMode: "broadcast", status: { $in: ["published", "assigned", "quoted", "quote_accepted", "accepted"] } },
+        { isGlobalRfq: true, status: { $in: ["published", "assigned", "quoted", "quote_accepted", "accepted"] } },
+        { isPublic: true, status: { $in: ["published", "assigned", "quoted", "quote_accepted", "accepted"] } }
       ],
-      status: { $nin: ["cancelled", "rejected"] }
+      status: { $nin: ["pending", "under_review", "cancelled", "rejected"] },
+      assignmentMode: { $nin: ["unassigned", "admin_direct"] }
     };
 
     const queryConditions = [
@@ -659,8 +677,8 @@ export const getSellerSchoolOrders = async (req, res) => {
     // Orders explicitly assigned, invited, or quoted by this seller
     if (matchIds.length > 0) {
       queryConditions.push(
-        { sellerId: { $in: matchIds } },
-        { invitedSellerIds: { $in: matchIds } },
+        { sellerId: { $in: matchIds }, assignmentMode: { $ne: "admin_direct" }, status: { $nin: ["cancelled", "rejected"] } },
+        { invitedSellerIds: { $in: matchIds }, assignmentMode: { $ne: "admin_direct" }, status: { $nin: ["pending", "under_review", "cancelled", "rejected"] } },
         { "quotations.sellerId": { $in: matchIds } }
       );
     }

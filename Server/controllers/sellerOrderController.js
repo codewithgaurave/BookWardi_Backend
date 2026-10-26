@@ -1474,10 +1474,31 @@ export const downloadSellerCreditNote = async (req, res) => {
     }
     if (!order) return res.status(404).json({ message: "Order not found" });
 
-    const { generateCreditNotePDF } = await import("../services/invoiceService.js");
     const orderObj = order.toObject ? order.toObject() : order;
     const enrichedOrder = (await enrichOrdersWithSellerAndConsumer([orderObj]))[0];
 
+    const reqType = String(enrichedOrder.returnRequest?.type || enrichedOrder.returnRequest?.requestType || "").toLowerCase();
+    const orderOverallStatus = String(enrichedOrder.overallStatus || enrichedOrder.status || "").toLowerCase().trim().replace(/[\s-]+/g, '_');
+    const returnStatus = String(enrichedOrder.returnRequest?.status || "").toLowerCase().trim().replace(/[\s-]+/g, '_');
+    const isReturn = reqType === "return" || orderOverallStatus.includes("return") || returnStatus.includes("return");
+    const isCancelled = orderOverallStatus === "cancelled" || Boolean(enrichedOrder.cancelledAt);
+
+    // Statutory Check: Credit Note is generated ONLY after return is accepted / approved by store
+    if (isReturn && !isCancelled) {
+      const acceptedStatuses = [
+        'approved', 'return_approved', 'pickup_scheduled',
+        'product_received', 'product_return_received',
+        'refund_initiated', 'refund_processed', 'refund_completed', 'refunded'
+      ];
+      const isAccepted = acceptedStatuses.some(s => orderOverallStatus.includes(s) || returnStatus.includes(s));
+      if (!isAccepted) {
+        return res.status(400).json({
+          message: "Credit Note will be generated after the return request is accepted/approved by the seller or store."
+        });
+      }
+    }
+
+    const { generateCreditNotePDF } = await import("../services/invoiceService.js");
     const isExchangeOrder = String(enrichedOrder.returnRequest?.type || enrichedOrder.returnRequest?.requestType || '').toLowerCase() === 'exchange' ||
       String(enrichedOrder.overallStatus || enrichedOrder.status || '').toLowerCase().includes('exchange');
     const filename = isExchangeOrder
