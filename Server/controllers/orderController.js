@@ -10,7 +10,7 @@ import Cart from "../models/Cart.js";
 import mongoose from "mongoose";
 import { sendDeliveryPartnerWhatsAppDispatch } from "../services/whatsappService.js";
 import { broadcastRealtimeEvent } from "../services/realtimeService.js";
-import { calculateSellerSettlement, calculateSettlementMaturity, reconcileSellerSettlementBalances } from "../services/settlementService.js";
+import { calculateSellerSettlement, calculateSettlementMaturity, reconcileSellerSettlementBalances, isGstExempted } from "../services/settlementService.js";
 import { 
   sendFast2SmsOrderPlaced,
   sendFast2SmsOrderConfirmation, 
@@ -27,6 +27,7 @@ import {
   sendOrderStatusSms
 } from "../services/smsService.js";
 import { saveBase64ToFile } from "./sellerAuthController.js";
+import { getSellerInvoicePrefix, formatSellerInvoiceNumber, formatSellerCreditNoteNumber, getSellerCreditNoteNumber } from "../utils/invoiceHelper.js";
 
 // Global in-memory cache for ultra-fast order retrieval
 let adminOrdersCache = null;
@@ -835,6 +836,15 @@ export const enrichOrdersWithSellerAndConsumer = async (orders) => {
         });
       }
 
+      // Ensure seller sequential invoice number is set
+      if (!ord.invoiceNumber || ord.invoiceNumber.startsWith("INV-")) {
+        const storeNameCand = ord.sellerStoreName || ord.storeName || ord.sellerDetails?.storeName || ord.items?.[0]?.storeName || "Store";
+        const prefix = getSellerInvoicePrefix(storeNameCand);
+        const seq = ord.sellerSequence || 1;
+        ord.invoiceNumber = formatSellerInvoiceNumber(prefix, seq);
+        ord.sellerInvoiceNo = ord.invoiceNumber;
+      }
+
       // Security: Strip raw deliveryOtp so OTP numbers are never exposed in any API response
       ord.deliveryOtp = "";
       if (ord.selfDeliveryDetails) {
@@ -1513,7 +1523,8 @@ export const createOrder = async (req, res) => {
         phone: sellerPhone,
         email: sellerEmail,
         address: sellerAddress,
-        city: sellerCity
+        city: sellerCity,
+        gstNumber: cachedSeller?.gstNumber || item.gstNumber || ""
       };
 
       // Attach dynamic seller commission rate
@@ -1715,10 +1726,12 @@ export const createOrder = async (req, res) => {
     // Fetch dynamic platform logistics settings for free delivery threshold
     let dynamicThreshold = 401;
     let universalShippingFee = 49;
+    let universalCodFee = 0;
     try {
       const globalSettings = await PlatformSetting.findOne({ key: "global_settings" }).lean();
       dynamicThreshold = Number(globalSettings?.freeShippingThreshold ?? globalSettings?.minOrderFreeShipping ?? 401);
       universalShippingFee = Number(globalSettings?.shippingFee ?? 49);
+      universalCodFee = Number(globalSettings?.codFee ?? 0);
     } catch (e) {
       console.warn("⚠️ Error fetching global settings for order creation:", e.message);
     }
@@ -1748,8 +1761,22 @@ export const createOrder = async (req, res) => {
       const itGross = Number(it.total) || Math.round(((Number(it.finalPrice || it.price || 0)) * (Number(it.quantity) || 1)) * 100) / 100;
       const itGstRate = Number(it.gstPercent ?? it.gstPercentage ?? it.gstRate ?? it.gst ?? (it.category?.toLowerCase()?.includes('book') ? 0 : 5));
       const sellerState = it.sellerDetails?.state || it.sellerId?.state || it.sellerState || "Uttar Pradesh";
+      const candidateGsts = [
+        it.sellerDetails?.gstNumber,
+        it.sellerId?.gstNumber,
+        it.sellerGstNumber,
+        primarySeller.sellerDetails?.gstNumber,
+        primarySeller.sellerId?.gstNumber
+      ].filter(Boolean);
+      const isExemptSellerItem = candidateGsts.some(isGstExempted) ||
+        String(it.sellerStoreName || it.storeName || primarySeller.sellerStoreName || "").toLowerCase().includes("national school dress") ||
+        String(it.sellerPhone || it.sellerDetails?.phone || "").replace(/\D/g, "").includes("9027237697");
+      const sellerGst = isExemptSellerItem ? "09BLMPK2840L2ZN" : (candidateGsts[0] || "");
+
       const stl = calculateSellerSettlement(itGross, {
-        commissionRate: it.commissionRate ?? 10,
+        commissionRate: isExemptSellerItem ? 0 : (it.commissionRate ?? 10),
+        sellerGstNumber: sellerGst,
+        isFullyExempted: isExemptSellerItem,
         paymentMethod: paymentMethod || "UPI",
         deliveryMode: topDeliveryMode || it.deliveryType,
         courierName: req.body.courierName || it.thirdPartyDetails?.courierName || "",
@@ -1847,9 +1874,18 @@ export const createOrder = async (req, res) => {
           return sum;
         }, 0);
 
+    const isCod = /cod|cash\s*on\s*delivery/i.test(String(paymentMethod || ''));
+    const orderCodFee = isCod
+      ? (req.body.codFee !== undefined && req.body.codFee !== null && !isNaN(Number(req.body.codFee))
+          ? Number(req.body.codFee)
+          : (req.body.appliedCodFee !== undefined && req.body.appliedCodFee !== null && !isNaN(Number(req.body.appliedCodFee))
+              ? Number(req.body.appliedCodFee)
+              : universalCodFee))
+      : 0;
+
     const finalTotalAmount = Number(calculatedTotal) > 0
       ? Number(calculatedTotal)
-      : Math.max(0, Math.round((overallItemsSubtotal + totalShipping + computedTax - totalDiscount) * 100) / 100);
+      : Math.max(0, Math.round((overallItemsSubtotal + totalShipping + computedTax + orderCodFee - totalDiscount) * 100) / 100);
 
     // Dynamic Delivery GST Rate (Section 8 Composite Supply: Delivery GST dynamically matches product GST)
     const itemGstRates = orderItems.map(it => {
@@ -1859,9 +1895,32 @@ export const createOrder = async (req, res) => {
     }).filter(r => !isNaN(r));
     const principalDeliveryGstRate = itemGstRates.length > 0 ? Math.max(...itemGstRates) : 5;
 
+    // Calculate sequential seller Tax Invoice Number (e.g. NSD01, NSD02...)
+    const sellerStoreForInvoice = allSellerStoreNames || primarySeller.sellerStoreName || primarySeller.name || "Store";
+    const sellerInvoicePrefix = getSellerInvoicePrefix(sellerStoreForInvoice);
+
+    let sellerPrevOrderCount = 0;
+    try {
+      const sellerCountFilter = primarySeller.sellerId ? {
+        $or: [
+          { sellerId: primarySeller.sellerId },
+          { "items.sellerId": primarySeller.sellerId },
+          { sellerStoreName: sellerStoreForInvoice }
+        ]
+      } : { sellerStoreName: sellerStoreForInvoice };
+      sellerPrevOrderCount = await Order.countDocuments(sellerCountFilter);
+    } catch (cntErr) {
+      console.warn("⚠️ [BACKEND] Count seller orders warning:", cntErr.message);
+    }
+    const currentSellerSeq = sellerPrevOrderCount + 1;
+    const generatedSellerInvoiceNo = formatSellerInvoiceNumber(sellerInvoicePrefix, currentSellerSeq);
+
     const newOrder = new Order({
       orderId: orderIdVal,
       id: orderIdVal,
+      invoiceNumber: generatedSellerInvoiceNo,
+      sellerInvoiceNo: generatedSellerInvoiceNo,
+      sellerSequence: currentSellerSeq,
       masterOrderId: orderIdVal,
       isSubOrder: false,
       subOrderIndex: 1,
@@ -1880,6 +1939,8 @@ export const createOrder = async (req, res) => {
       freeDeliveryThreshold: dynamicThreshold,
       shippingCost: totalShipping,
       shippingFee: totalShipping,
+      codFee: orderCodFee,
+      appliedCodFee: orderCodFee,
       shippingGstRate: principalDeliveryGstRate,
       deliveryGstRate: principalDeliveryGstRate,
       discount: discount || discountAmount || totalDiscount || 0,
@@ -2387,8 +2448,11 @@ export const updateOrder = async (req, res) => {
           existingOrder.sellerPayout = 0;
           existingOrder.sellerSettlement = 0;
           existingOrder.netSettlementAmount = 0;
-          const displayId = existingOrder.orderId || existingOrder.id || String(existingOrder._id).slice(-8).toUpperCase();
-          existingOrder.creditNoteNumber = existingOrder.creditNoteNumber || `CN-${displayId}`;
+          const cnPrefix = getSellerInvoicePrefix(existingOrder.sellerStoreName || existingOrder.storeName || existingOrder.sellerName);
+          const cnSeq = existingOrder.sellerCreditNoteSequence || existingOrder.sellerSequence || 1;
+          const assignedCn = formatSellerCreditNoteNumber(cnPrefix, cnSeq);
+          existingOrder.sellerCreditNoteNo = existingOrder.sellerCreditNoteNo || assignedCn;
+          existingOrder.creditNoteNumber = existingOrder.creditNoteNumber || assignedCn;
           existingOrder.creditNoteIssuedAt = existingOrder.creditNoteIssuedAt || new Date();
           existingOrder.items.forEach(item => {
             item.status = 'Cancelled';
@@ -2430,8 +2494,11 @@ export const updateOrder = async (req, res) => {
         existingOrder.paymentStatus = "refunded";
         existingOrder.refundStatus = "Refund Completed";
         if (existingOrder.returnRequest) existingOrder.returnRequest.status = "refund_completed";
-        const displayId = existingOrder.orderId || existingOrder.id || String(existingOrder._id).slice(-8).toUpperCase();
-        existingOrder.creditNoteNumber = existingOrder.creditNoteNumber || `CN-${displayId}`;
+        const cnPrefix2 = getSellerInvoicePrefix(existingOrder.sellerStoreName || existingOrder.storeName || existingOrder.sellerName);
+        const cnSeq2 = existingOrder.sellerCreditNoteSequence || existingOrder.sellerSequence || 1;
+        const assignedCn2 = formatSellerCreditNoteNumber(cnPrefix2, cnSeq2);
+        existingOrder.sellerCreditNoteNo = existingOrder.sellerCreditNoteNo || assignedCn2;
+        existingOrder.creditNoteNumber = existingOrder.creditNoteNumber || assignedCn2;
         existingOrder.creditNoteIssuedAt = existingOrder.creditNoteIssuedAt || new Date();
         existingOrder.settlementStatus = "refunded";
         existingOrder.isSettlementMatured = false;
@@ -2474,12 +2541,20 @@ export const updateOrder = async (req, res) => {
         existingOrder.settlementDueDate = exchangeSettlementDueDate;
         existingOrder.settlementStatus = "pending_exchange_buffer";
         existingOrder.isSettlementMatured = false;
+        const exItemId = existingOrder.returnRequest?.itemId ? String(existingOrder.returnRequest.itemId) : null;
+        const exItemName = existingOrder.returnRequest?.itemName ? String(existingOrder.returnRequest.itemName).trim().toLowerCase() : null;
         if (Array.isArray(existingOrder.items)) {
           existingOrder.items.forEach(it => {
-            it.exchangedAt = exchangedNow;
-            it.settlementDueDate = exchangeSettlementDueDate;
-            it.settlementStatus = "pending_exchange_buffer";
-            it.isSettlementMatured = false;
+            const isTargetExch = (exItemId || exItemName)
+              ? ((exItemId && String(it._id || it.id || it.productId) === exItemId) || (exItemName && String(it.name || '').trim().toLowerCase() === exItemName))
+              : true;
+            if (isTargetExch) {
+              it.exchangedAt = exchangedNow;
+              it.settlementDueDate = exchangeSettlementDueDate;
+              it.settlementStatus = "pending_exchange_buffer";
+              it.isSettlementMatured = false;
+              it.status = "Exchanged";
+            }
           });
         }
       } else if (newStatusKey === "exchange_dispatched") {
@@ -2563,6 +2638,7 @@ export const updateOrder = async (req, res) => {
               const itemGstRate = Number(item.gstPercent ?? item.gstPercentage ?? item.gstRate ?? item.gst ?? (item.category?.toLowerCase()?.includes('book') ? 0 : 5));
               const stl = calculateSellerSettlement(itemTotal, {
                 commissionRate: commRate,
+                sellerGstNumber: seller.gstNumber,
                 paymentMethod: existingOrder.paymentMethod,
                 deliveryMode: existingOrder.deliveryMode || item.deliveryType,
                 courierName: existingOrder.courierName || item.thirdPartyDetails?.courierName,
@@ -4123,8 +4199,11 @@ export const updateReturnExchangeStatus = async (req, res) => {
       order.sellerPayout = 0;
       order.sellerSettlement = 0;
       order.netSettlementAmount = 0;
-      const displayId = order.orderId || order.id || String(order._id).slice(-8).toUpperCase();
-      order.creditNoteNumber = order.creditNoteNumber || `CN-${displayId}`;
+      const cnPrefix3 = getSellerInvoicePrefix(order.sellerStoreName || order.storeName || order.sellerName);
+      const cnSeq3 = order.sellerCreditNoteSequence || order.sellerSequence || 1;
+      const assignedCn3 = formatSellerCreditNoteNumber(cnPrefix3, cnSeq3);
+      order.sellerCreditNoteNo = order.sellerCreditNoteNo || assignedCn3;
+      order.creditNoteNumber = order.creditNoteNumber || assignedCn3;
       order.creditNoteIssuedAt = order.creditNoteIssuedAt || new Date();
 
       if (targetItem) {

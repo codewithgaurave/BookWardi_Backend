@@ -1,0 +1,54 @@
+[
+  {
+    "_id": "6aa915ead3119cb571cfedab",
+    "name": "Super Admin",
+    "email": "admin@admin.com",
+    "password": "$2a$12$7nbAAL/UW2gyDLmUY3asa.q62/8USE7D5FA6vrFDBuMy91wQL09xm",
+    "role": "admin",
+    "createdAt": "2026-09-15T09:54:50.078Z",
+    "__v": 0,
+    "permissions": {},
+    "phone": "",
+    "status": "active"
+  },
+  {
+    "_id": "6ab2a445527faacf0339b9c6",
+    "name": "praveen",
+    "email": "nationalschooldressbehat@gmail.com",
+    "phone": "8077407120",
+    "password": "$2a$12$GHdrqn6TNDxS8VEEdGXV1ud/hFSGPrR3Y7axxLWwKeJ7u/S06cPrO",
+    "role": "subadmin",
+    "permissions": {
+      "dashboard": "none",
+      "analytics": "none",
+      "notifications": "none",
+      "products": "none",
+      "inventory": "none",
+      "orders": "editor",
+      "finance": "none",
+      "sellers": "none",
+      "schools": "none",
+      "users": "none",
+      "marketing": "none",
+      "reviews": "none",
+      "settings": "none",
+      "support": "none"
+    },
+    "status": "active",
+    "createdBy": "507f1f77bcf86cd799439011",
+    "createdAt": "2026-09-22T15:52:37.017Z",
+    "__v": 0
+  },
+  {
+    "_id": "6acde5e63d38da98ede83a12",
+    "name": "Super Admin",
+    "email": "admin@gmail.com",
+    "phone": "",
+    "password": "$2a$12$nkvKwKdQPgBrojLLyY7dKOBK4KxwcLr/PwBaCPBvtf6r3PlxvfjaO",
+    "role": "super_admin",
+    "status": "active",
+    "createdBy": null,
+    "createdAt": "2026-10-13T08:03:50.247Z",
+    "__v": 0
+  }
+]

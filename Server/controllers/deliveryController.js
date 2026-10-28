@@ -708,7 +708,24 @@ export const verifyDeliveryOtp = async (req, res) => {
     order.selfDeliveryDetails.status = isReturnOrder ? "Pickup Completed" : (isExchangeOrder ? "Exchange Completed" : "Delivered");
 
     if (Array.isArray(order.items)) {
+      const targetExchItemId = order.returnRequest?.itemId ? String(order.returnRequest.itemId) : null;
+      const targetExchItemName = order.returnRequest?.itemName ? String(order.returnRequest.itemName).trim().toLowerCase() : null;
+
       order.items.forEach((it) => {
+        // Partial exchange check: if this order has multiple items and only one was requested for exchange,
+        // ONLY the exchanged item transitions to "exchanged", keeping other delivered items intact!
+        const isTargetOfExchange = isExchangeOrder && (targetExchItemId || targetExchItemName)
+          ? (
+              (targetExchItemId && (String(it._id || it.id || it.productId) === targetExchItemId)) ||
+              (targetExchItemName && String(it.name || '').trim().toLowerCase() === targetExchItemName)
+            )
+          : true;
+
+        if (isExchangeOrder && !isTargetOfExchange) {
+          // Leave non-exchanged delivered items as they are
+          return;
+        }
+
         it.status = finalStatus;
         if (!it.selfDeliveryDetails) it.selfDeliveryDetails = {};
         it.selfDeliveryDetails.deliveredAt = now;

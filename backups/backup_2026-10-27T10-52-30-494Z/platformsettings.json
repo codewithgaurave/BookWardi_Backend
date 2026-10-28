@@ -1,0 +1,22 @@
+[
+  {
+    "_id": "6aac35238857ead0548d2dae",
+    "key": "global_settings",
+    "schoolRadiusKm": 200,
+    "defaultCommissionRate": 10,
+    "gstTaxRate": 18,
+    "shippingFee": 49,
+    "minOrderFreeShipping": 401,
+    "maintenanceMode": false,
+    "supportEmail": "support@bookvardi.in",
+    "supportPhone": "+91 98765 43210",
+    "updatedBy": "Super Admin",
+    "updatedAt": "2026-10-23T05:47:41.488Z",
+    "createdAt": "2026-09-17T18:44:51.245Z",
+    "__v": 0,
+    "freeShippingThreshold": 401,
+    "gstOnCommissionRate": 18,
+    "gstTcsRate": 0.5,
+    "tdsRate": 0.1
+  }
+]

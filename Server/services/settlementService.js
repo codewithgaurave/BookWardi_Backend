@@ -42,6 +42,16 @@ import Seller from "../models/Seller.js";
  * - एडमिन फ्री डिलीवरी थ्रेशोल्ड (डिफ़ॉल्ट ₹401 या एडमिन सेटिंग्स अनुसार) या अधिक के ऑर्डर पर: यदि डिलीवरी का खर्च एडमिन उठाता है, तो सेलर से डिलीवरी चार्ज नहीं काटना है।
  */
 
+export const EXEMPTED_GST_NUMBERS = [
+  "09BLMPK2840L2ZN"
+];
+
+export function isGstExempted(gst) {
+  if (!gst) return false;
+  const clean = String(gst).trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
+  return EXEMPTED_GST_NUMBERS.some(item => clean === item.trim().toUpperCase().replace(/[^A-Z0-9]/g, ""));
+}
+
 export const SETTLEMENT_RULES = {
   ONLINE_SELF_DELIVERY: {
     code: "ONLINE_SELF_DELIVERY",
@@ -207,20 +217,64 @@ export function calculateSellerSettlement(grossSale, options = {}) {
 
   const isRule3CodSelf = rule.code === "COD_SELF_DELIVERY";
 
-  // 1. Platform Commission Rate (Default 10%)
-  const commissionRate = (options.commissionRate !== undefined && options.commissionRate !== null && !isNaN(Number(options.commissionRate)))
-    ? Number(options.commissionRate)
-    : rule.defaultCommissionRate;
+  // Check if seller's GST number is specifically exempted (e.g. 09BLMPK2840L2ZN)
+  const candidateGstNumbers = [
+    options.gstNumber,
+    options.sellerGstNumber,
+    options.sellerGstin,
+    options.gstin,
+    options.sellerGst,
+    options.seller?.gstNumber,
+    options.seller?.gstin,
+    options.sellerDetails?.gstNumber,
+    options.sellerDetails?.gstin,
+    options.scope?.gstNumber,
+    options.scope?.gstin
+  ].filter(Boolean);
 
-  // 2. GST on Commission Rate (18%)
-  const gstOnCommissionRate = (options.gstOnCommissionRate !== undefined && !isNaN(Number(options.gstOnCommissionRate)))
-    ? Number(options.gstOnCommissionRate)
-    : rule.gstOnCommissionRate;
+  const candidateStores = [
+    options.sellerStoreName,
+    options.storeName,
+    options.sellerName,
+    options.sellerDetails?.storeName,
+    options.sellerDetails?.sellerStoreName,
+    options.sellerDetails?.sellerName,
+    options.scope?.storeName,
+    options.scope?.name
+  ].filter(Boolean).map(s => String(s).toLowerCase().replace(/[^a-z0-9]/g, ""));
+  const isNationalSchoolDress = candidateStores.some(s => s.includes("nationalschooldress") || s.includes("pustakbhandar"));
 
-  // 3. TDS Rate (0.1% under Sec 194-O)
-  const tdsRate = (options.tdsRate !== undefined && !isNaN(Number(options.tdsRate)))
-    ? Number(options.tdsRate)
-    : rule.tdsRate;
+  const candidatePhones = [
+    options.sellerPhone,
+    options.phone,
+    options.sellerDetails?.phone,
+    options.scope?.phone
+  ].filter(Boolean).map(p => String(p).replace(/\D/g, ""));
+  const isNationalPhone = candidatePhones.some(p => p.includes("9027237697"));
+
+  const isExemptedByGst = candidateGstNumbers.some(g => isGstExempted(g)) || isNationalSchoolDress || isNationalPhone;
+  const isFullyExempted = Boolean(options.isFullyExempted || options.isTaxExempted || isExemptedByGst);
+
+  // 1. Platform Commission Rate (Default 10%, strictly 0% if exempted)
+  const commissionRate = isFullyExempted
+    ? 0
+    : ((options.commissionRate !== undefined && options.commissionRate !== null && !isNaN(Number(options.commissionRate)))
+      ? Number(options.commissionRate)
+      : rule.defaultCommissionRate);
+
+  // 2. GST on Commission Rate (18%, strictly 0% if exempted)
+  const gstOnCommissionRate = isFullyExempted
+    ? 0
+    : ((options.gstOnCommissionRate !== undefined && !isNaN(Number(options.gstOnCommissionRate)))
+      ? Number(options.gstOnCommissionRate)
+      : rule.gstOnCommissionRate);
+
+  // 3. TDS Rate (0.1% under Sec 194-O, strictly 0% if exempted)
+  const tdsRate = isFullyExempted
+    ? 0
+    : ((options.tdsRate !== undefined && !isNaN(Number(options.tdsRate)))
+      ? Number(options.tdsRate)
+      : rule.tdsRate);
 
   // 4. GST TCS Rate & Breakdown (Sec 52)
   // Intra-State: 0.25% CGST + 0.25% SGST (Total 0.5%)
@@ -284,7 +338,7 @@ export function calculateSellerSettlement(grossSale, options = {}) {
     baseAmount = Math.max(0, Math.round((gross / (1 + (productGstRate / 100))) * 100) / 100);
   }
 
-  const baseGstTcsRate = isRule3CodSelf
+  const baseGstTcsRate = (isFullyExempted || isRule3CodSelf)
     ? 0
     : ((options.gstTcsRate !== undefined && !isNaN(Number(options.gstTcsRate)))
         ? Number(options.gstTcsRate)
@@ -294,7 +348,8 @@ export function calculateSellerSettlement(grossSale, options = {}) {
   // TCS applies only to taxable supplies (productGstRate > 0)
   // For 0% GST items (books/tax-free), GST TCS is strictly 0!
   // For Rule 3 COD Self Delivery (portal does not collect funds), GST TCS is strictly 0!
-  const isTcsApplicable = !isRule3CodSelf && !isTaxFree && baseGstTcsRate > 0 && baseAmount > 0;
+  // For Exempted GSTIN (09BLMPK2840L2ZN), GST TCS is strictly 0!
+  const isTcsApplicable = !isFullyExempted && !isRule3CodSelf && !isTaxFree && baseGstTcsRate > 0 && baseAmount > 0;
 
   let cgstTcsRate = 0;
   let sgstTcsRate = 0;
@@ -385,7 +440,7 @@ export function calculateSellerSettlement(grossSale, options = {}) {
   let gstOnDeliveryAmount = 0;
   let totalDeliveryDeduction = 0;
 
-  if (isThirdParty && deliveryChargeBorneBy === "seller" && !isDeliveryExemptedForSeller) {
+  if (!isFullyExempted && isThirdParty && deliveryChargeBorneBy === "seller" && !isDeliveryExemptedForSeller) {
     const rawDeliveryFee = Math.max(0, Number(options.deliveryCharge ?? options.shippingFee ?? options.shippingCost ?? options.shippingAmount ?? 49));
     // Delivery charges are GST INCLUSIVE (e.g. ₹49 total includes GST, no extra 5% added on top)
     totalDeliveryDeduction = Math.round(rawDeliveryFee * 100) / 100;
@@ -459,7 +514,10 @@ export function calculateSellerSettlement(grossSale, options = {}) {
     statutoryDeductions,
     totalDeductions,
     netSettlement,
-    finalSellerSettlement: netSettlement
+    finalSellerSettlement: netSettlement,
+    isGstExemptedSeller: isFullyExempted,
+    exemptedGstNumber: isExemptedByGst ? (candidateGstNumbers.find(g => isGstExempted(g)) || "09BLMPK2840L2ZN") : "",
+    exemptionReason: isFullyExempted ? "Special Statutory Exemption (GST: 09BLMPK2840L2ZN) - 0% Commission, 0% TDS, 0% TCS" : ""
   };
 }
 
@@ -781,10 +839,14 @@ export async function reconcileSellerSettlementBalances(sellerId, options = {}) 
 
         grossDelivered += itemGross;
 
-        // If active item doesn't have netSettlementAmount computed, calculate it
-        if (item.netSettlementAmount === undefined || item.netSettlementAmount === null) {
+        const isSellerExempt = isGstExempted(seller.gstNumber);
+
+        // If active item doesn't have netSettlementAmount computed, or seller is exempted from all deductions, calculate it
+        if (item.netSettlementAmount === undefined || item.netSettlementAmount === null || (isSellerExempt && Number(item.totalDeductions || 0) > 0)) {
           const stl = calculateSellerSettlement(itemGross, {
-            commissionRate: item.commissionRate ?? order.commissionRate ?? seller.commissionRate ?? 10,
+            commissionRate: isSellerExempt ? 0 : (item.commissionRate ?? order.commissionRate ?? seller.commissionRate ?? 10),
+            sellerGstNumber: seller.gstNumber,
+            isFullyExempted: isSellerExempt,
             paymentMethod: order.paymentMethod,
             deliveryMode: order.deliveryMode,
             courierName: order.courierName,

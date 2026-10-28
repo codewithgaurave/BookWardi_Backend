@@ -111,6 +111,7 @@ export const approveSeller = async (req, res) => {
     }
 
     seller.status = "approved";
+    seller.bankVerificationStatus = "verified";
     seller.rejectionReason = "";
     seller.approvedAt = new Date();
     if (req.user?.id && mongoose.Types.ObjectId.isValid(req.user.id)) {
@@ -502,6 +503,7 @@ export const downloadSellerFinancialStatement = async (req, res) => {
       const customerState = o.shippingAddress?.state || "Uttar Pradesh";
       const stl = calculateSellerSettlement(effectiveTotal, {
         commissionRate,
+        sellerGstNumber: seller.gstNumber,
         paymentMethod: o.paymentMethod || "UPI",
         deliveryMode: o.deliveryMode || "self_delivery",
         courierName: o.courierName,

@@ -1,4 +1,6 @@
 import PDFDocument from "pdfkit";
+import { isGstExempted } from "./settlementService.js";
+import { getSellerInvoicePrefix, formatSellerInvoiceNumber, formatSellerCreditNoteNumber, getSellerCreditNoteNumber } from "../utils/invoiceHelper.js";
 
 export const isGenericSellerPlaceholder = (val) => {
   if (!val || typeof val !== 'string') return true;
@@ -502,17 +504,32 @@ export const generateTaxInvoicePDF = (order, filterSellerId = null, options = {}
   const mutedColor = "#64748b"; // Slate 500
   const borderColor = "#e2e8f0"; // Slate 200
 
+  const compName = options.companyName || options.platformSetting?.companyName || order.platformSettings?.companyName || "Book Vardi";
+  const compAddr = options.companyAddress || options.platformSetting?.companyAddress || order.platformSettings?.companyAddress || "Lucknow, Uttar Pradesh - 226001";
+  const compGstin = options.companyGstin || options.platformSetting?.companyGstin || order.platformSettings?.companyGstin || "09AAACB1234F1Z9";
+
   // 1. HEADER SECTION (Brand & Invoice Title)
   doc
     .fillColor(accentColor)
     .fontSize(22)
     .font("Helvetica-Bold")
-    .text("BookVardi", 40, 40)
+    .text(compName, 40, 40)
     .fontSize(9)
     .font("Helvetica")
     .fillColor(mutedColor)
     .text("India's Premier School & Education Marketplace", 40, 68)
-    .text("GSTIN: 09AAACS1429B1Z2 | support@bookvardi.com", 40, 80);
+    .text(`${compAddr} | GSTIN: ${compGstin}`, 40, 80);
+
+  // 2. SOLD BY (SELLER) & BILL TO / SHIP TO SECTION
+  const resolvedSeller = resolveInvoiceSellerDetails(order, filterSellerId);
+  const resolvedConsumer = resolveInvoiceConsumerDetails(order);
+
+  const invoicePrefix = getSellerInvoicePrefix(resolvedSeller?.storeName || order.sellerStoreName || resolvedSeller?.name);
+  const resolvedInvoiceNo = (order.invoiceNumber && !order.invoiceNumber.startsWith("INV-"))
+    ? order.invoiceNumber
+    : (order.sellerInvoiceNo && !order.sellerInvoiceNo.startsWith("INV-"))
+      ? order.sellerInvoiceNo
+      : formatSellerInvoiceNumber(invoicePrefix, order.sellerSequence || 1);
 
   doc
     .fillColor(primaryColor)
@@ -522,16 +539,12 @@ export const generateTaxInvoicePDF = (order, filterSellerId = null, options = {}
     .fontSize(9)
     .font("Helvetica")
     .fillColor(mutedColor)
-    .text(`Invoice No: INV-${order.orderId || order._id.toString().substring(0, 8).toUpperCase()}`, 400, 62, { align: "right" })
-    .text(`Order ID: ${order.orderId || order._id}`, 400, 74, { align: "right" })
+    .text(`Invoice No: ${resolvedInvoiceNo}`, 400, 62, { align: "right" })
+    .text(`Order ID: #${order.orderId || order._id || order.id}`, 400, 74, { align: "right" })
     .text(`Date: ${new Date(order.createdAt || Date.now()).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })}`, 400, 86, { align: "right" });
 
   // Divider Line
   doc.strokeColor(borderColor).lineWidth(1).moveTo(40, 105).lineTo(555, 105).stroke();
-
-  // 2. SOLD BY (SELLER) & BILL TO / SHIP TO SECTION
-  const resolvedSeller = resolveInvoiceSellerDetails(order, filterSellerId);
-  const resolvedConsumer = resolveInvoiceConsumerDetails(order);
 
   // Left Column: Sold By
   doc
@@ -1179,7 +1192,17 @@ export const generateTaxInvoicePDF = (order, filterSellerId = null, options = {}
     order.commissionPercentage
   ].filter(r => r !== undefined && r !== null && !isNaN(Number(r)));
 
-  const marketplaceCommissionRate = candidateRates.length > 0 ? Number(candidateRates[0]) : 10;
+  const candidateGstList = [
+    resolvedSeller?.gstNumber,
+    order.sellerDetails?.gstNumber,
+    order.sellerDetails?.gstin,
+    firstItemToRender?.sellerDetails?.gstNumber,
+    firstItemToRender?.sellerDetails?.gstin,
+    order.sellerGstNumber
+  ].filter(Boolean);
+  const isExemptedSeller = candidateGstList.some(g => isGstExempted(g));
+
+  const marketplaceCommissionRate = isExemptedSeller ? 0 : (candidateRates.length > 0 ? Number(candidateRates[0]) : 10);
   
   const settlementGross = Math.max(0, Math.round((subtotal - totalDiscounts) * 100) / 100);
 
@@ -1195,18 +1218,18 @@ export const generateTaxInvoicePDF = (order, filterSellerId = null, options = {}
   }, 0);
   const settlementTaxable = itemsTaxableSum > 0 ? itemsTaxableSum : settlementGross;
 
-  const marketplaceCommission = isSettlementReversed ? 0 : Math.round((settlementGross * (marketplaceCommissionRate / 100)) * 100) / 100;
-  const gstOnCommission = isSettlementReversed ? 0 : Math.round((marketplaceCommission * 0.18) * 100) / 100;
-  const tdsAmount = isSettlementReversed ? 0 : Math.round((settlementGross * 0.001) * 100) / 100;
+  const marketplaceCommission = (isSettlementReversed || isExemptedSeller) ? 0 : Math.round((settlementGross * (marketplaceCommissionRate / 100)) * 100) / 100;
+  const gstOnCommission = (isSettlementReversed || isExemptedSeller) ? 0 : Math.round((marketplaceCommission * 0.18) * 100) / 100;
+  const tdsAmount = (isSettlementReversed || isExemptedSeller) ? 0 : Math.round((settlementGross * 0.001) * 100) / 100;
 
   const isTaxFreeOrder = (itemsToRender || []).every(it => {
     const r = Number(it.rate ?? it.gstPercent ?? it.gstPercentage ?? it.gstRate ?? it.gst ?? 5);
     const cat = String(it.category || '').toLowerCase();
     return r === 0 || cat.includes('book');
   });
-  const tcsRate = (isSettlementReversed || isRule3CodSelf || isTaxFreeOrder) ? 0 : 0.5;
+  const tcsRate = (isSettlementReversed || isExemptedSeller || isRule3CodSelf || isTaxFreeOrder) ? 0 : 0.5;
   // GST TCS under Sec 52 of CGST Act: strictly on Taxable Value (net value of taxable supplies), NOT gross!
-  const gstTcsAmount = (isSettlementReversed || isRule3CodSelf || isTaxFreeOrder) ? 0 : Math.round(((settlementTaxable * tcsRate) / 100) * 100) / 100;
+  const gstTcsAmount = (isSettlementReversed || isExemptedSeller || isRule3CodSelf || isTaxFreeOrder) ? 0 : Math.round(((settlementTaxable * tcsRate) / 100) * 100) / 100;
 
   const freeDeliveryThreshold = Number(order.freeDeliveryThreshold ?? order.minOrderFreeShipping ?? 401);
   const isAboveThreshold = (settlementGross >= freeDeliveryThreshold || calculatedGrandTotal >= freeDeliveryThreshold || Number(order.total || order.totalAmount || 0) >= freeDeliveryThreshold);
@@ -1223,7 +1246,7 @@ export const generateTaxInvoicePDF = (order, filterSellerId = null, options = {}
   let deliveryChargeAmount = 0;
   let gstOnDeliveryAmount = 0;
   let totalDeliveryDeduction = 0;
-  if (!isSettlementReversed && isThirdParty && delivBorneBy === 'seller' && !isAboveThreshold) {
+  if (!isSettlementReversed && !isExemptedSeller && isThirdParty && delivBorneBy === 'seller' && !isAboveThreshold) {
     const rawDeliveryFee = Number(order.deliveryCharge ?? order.shippingAmount ?? order.shippingCost ?? order.shippingFee ?? 49);
     // Delivery charges are GST INCLUSIVE (no extra GST added on top)
     totalDeliveryDeduction = Math.round(rawDeliveryFee * 100) / 100;
@@ -1231,13 +1254,15 @@ export const generateTaxInvoicePDF = (order, filterSellerId = null, options = {}
     gstOnDeliveryAmount = Math.round((totalDeliveryDeduction - deliveryChargeAmount) * 100) / 100;
   }
 
-  const statutoryDeductions = isSettlementReversed ? 0 : Math.round((marketplaceCommission + gstOnCommission + tdsAmount + gstTcsAmount) * 100) / 100;
-  const totalDeductions = isSettlementReversed ? 0 : Math.round((statutoryDeductions + totalDeliveryDeduction) * 100) / 100;
+  const statutoryDeductions = (isSettlementReversed || isExemptedSeller) ? 0 : Math.round((marketplaceCommission + gstOnCommission + tdsAmount + gstTcsAmount) * 100) / 100;
+  const totalDeductions = (isSettlementReversed || isExemptedSeller) ? 0 : Math.round((statutoryDeductions + totalDeliveryDeduction) * 100) / 100;
   const sellerSettlement = isSettlementReversed
     ? 0
-    : (isRule3CodSelf
-      ? -totalDeductions
-      : Math.max(0, Math.round((settlementGross - totalDeductions) * 100) / 100));
+    : (isExemptedSeller
+      ? settlementGross
+      : (isRule3CodSelf
+        ? -totalDeductions
+        : Math.max(0, Math.round((settlementGross - totalDeductions) * 100) / 100)));
 
   const cardY = y + 4;
   const cardHeight = 115;
@@ -1562,8 +1587,18 @@ export const generateCreditNotePDF = (order, filterSellerId = null) => {
   const cardBg = "#f8fafc"; // Slate 50
 
   const orderIdStr = order.orderId || (order._id ? order._id.toString().substring(0, 8).toUpperCase() : "ORDER");
-  const creditNoteNo = `CN-${orderIdStr}`;
-  const originalInvoiceNo = `INV-${orderIdStr}`;
+  const resolvedSellerForCN = resolveInvoiceSellerDetails(order, filterSellerId);
+  const cnPrefix = getSellerInvoicePrefix(resolvedSellerForCN?.storeName || order.sellerStoreName || resolvedSellerForCN?.name);
+  const originalInvoiceNo = (order.invoiceNumber && !order.invoiceNumber.startsWith("INV-"))
+    ? order.invoiceNumber
+    : (order.sellerInvoiceNo && !order.sellerInvoiceNo.startsWith("INV-"))
+      ? order.sellerInvoiceNo
+      : formatSellerInvoiceNumber(cnPrefix, order.sellerSequence || 1);
+  const creditNoteNo = (order.sellerCreditNoteNo && !order.sellerCreditNoteNo.startsWith("CN-INV-"))
+    ? order.sellerCreditNoteNo
+    : (order.creditNoteNumber && !order.creditNoteNumber.startsWith("CN-INV-") && !order.creditNoteNumber.startsWith("CN-ORDER"))
+      ? order.creditNoteNumber
+      : formatSellerCreditNoteNumber(cnPrefix, order.sellerCreditNoteSequence || order.sellerSequence || 1);
 
   // Reversal context determination
   const reqType = String(order.returnRequest?.type || order.returnRequest?.requestType || "").toLowerCase();
@@ -1618,17 +1653,21 @@ export const generateCreditNotePDF = (order, filterSellerId = null) => {
   // Top accent bar
   doc.rect(40, 36, 515, 3).fill(roseColor);
 
+  const compNameCN = order.platformSettings?.companyName || "Book Vardi";
+  const compAddrCN = order.platformSettings?.companyAddress || "Lucknow, Uttar Pradesh - 226001";
+  const compGstinCN = order.platformSettings?.companyGstin || "09AAACB1234F1Z9";
+
   // 1. HEADER SECTION (Brand & Credit Note Title)
   doc
     .fillColor(roseColor)
     .fontSize(20)
     .font("Helvetica-Bold")
-    .text("BookVardi", 40, 46)
+    .text(compNameCN, 40, 46)
     .fontSize(8)
     .font("Helvetica")
     .fillColor(mutedColor)
     .text("India's Premier School & Education Marketplace", 40, 70)
-    .text("GSTIN: 09AAACS1429B1Z2 | support@bookvardi.com", 40, 81);
+    .text(`${compAddrCN} | GSTIN: ${compGstinCN}`, 40, 81);
 
   doc
     .fillColor(roseColor)
@@ -1683,14 +1722,7 @@ export const generateCreditNotePDF = (order, filterSellerId = null) => {
   doc.text(cnLocStr ? `Address: ${cnLocStr}` : "Location: India", 48, cnSY, { width: 236, lineBreak: false, ellipsis: true });
   cnSY += 10;
 
-  const cnSellerContactStr = [
-    resolvedSeller.phone ? `Phone: ${resolvedSeller.phone}` : null,
-    resolvedSeller.email ? `Email: ${resolvedSeller.email}` : null
-  ].filter(Boolean).join(" | ");
-  if (cnSellerContactStr) {
-    doc.text(cnSellerContactStr, 48, cnSY, { width: 236, lineBreak: false, ellipsis: true });
-    cnSY += 10;
-  }
+  // Privacy enforcement: Seller contact (Phone/Email) excluded from Credit Note
   doc.font("Helvetica-Bold").fillColor(primaryColor).text(`GSTIN: ${resolvedSeller.gstNumber || '09AAACB1234F1Z9'}`, 48, cnSY, { width: 236 });
 
   // Right Card: Customer / Recipient
@@ -1714,14 +1746,8 @@ export const generateCreditNotePDF = (order, filterSellerId = null) => {
     .text(resolvedConsumer.street || "Delivery Address", custCardX + 8, cardY + 34, { width: 236, lineBreak: false, ellipsis: true })
     .text(resolvedConsumer.cityStatePin || "India", custCardX + 8, cardY + 44, { width: 236, lineBreak: false, ellipsis: true });
 
-  const cnCustContactStr = [
-    resolvedConsumer.phone ? `Phone: ${resolvedConsumer.phone}` : null,
-    resolvedConsumer.email ? `Email: ${resolvedConsumer.email}` : null
-  ].filter(Boolean).join(" | ");
-  if (cnCustContactStr) {
-    doc.text(cnCustContactStr, custCardX + 8, cardY + 54, { width: 236, lineBreak: false, ellipsis: true });
-  }
-  doc.font("Helvetica-Bold").fillColor(primaryColor).text("Category: End Consumer / Student Recipient", custCardX + 8, cardY + 64, { width: 236 });
+  // Privacy enforcement: Customer contact (Phone/Email) excluded from Credit Note
+  doc.font("Helvetica-Bold").fillColor(primaryColor).text("Category: End Consumer / Student Recipient", custCardX + 8, cardY + 54, { width: 236 });
 
   // 3. STATUTORY STATUS & REVERSAL REASON BOX
   let reasonHeading = "REASON FOR CREDIT NOTE";
@@ -2106,8 +2132,14 @@ export const generateExchangeInvoicePDF = (order, filterSellerId = null) => {
   const cardBg = "#f8fafc"; // Slate 50
 
   const orderIdStr = order.orderId || (order._id ? order._id.toString().substring(0, 8).toUpperCase() : "ORDER");
-  const exchangeInvoiceNo = `EXCH-${orderIdStr}`;
-  const originalInvoiceNo = `INV-${orderIdStr}`;
+  const resolvedSellerForExch = resolveInvoiceSellerDetails(order, filterSellerId);
+  const exchPrefix = getSellerInvoicePrefix(resolvedSellerForExch?.storeName || order.sellerStoreName || resolvedSellerForExch?.name);
+  const originalInvoiceNo = (order.invoiceNumber && !order.invoiceNumber.startsWith("INV-"))
+    ? order.invoiceNumber
+    : (order.sellerInvoiceNo && !order.sellerInvoiceNo.startsWith("INV-"))
+      ? order.sellerInvoiceNo
+      : formatSellerInvoiceNumber(exchPrefix, order.sellerSequence || 1);
+  const exchangeInvoiceNo = `EXCH-${originalInvoiceNo}`;
 
   const exchangeDateRaw = order.returnRequest?.updatedAt || order.returnRequest?.requestedAt || order.updatedAt || order.createdAt;
   const exchangeDateStr = new Date(exchangeDateRaw).toLocaleDateString("en-IN", {
@@ -2125,35 +2157,39 @@ export const generateExchangeInvoicePDF = (order, filterSellerId = null) => {
   // Top accent bar
   doc.rect(40, 36, 515, 3).fill(darkTeal);
 
-  // 1. HEADER SECTION (Brand & Exchange Invoice Title)
+  const compNameEx = order.platformSettings?.companyName || "Book Vardi";
+  const compAddrEx = order.platformSettings?.companyAddress || "Lucknow, Uttar Pradesh - 226001";
+  const compGstinEx = order.platformSettings?.companyGstin || "09AAACB1234F1Z9";
+
+  // 1. HEADER SECTION (Brand & Tax Invoice Title)
   doc
     .fillColor(darkTeal)
     .fontSize(20)
     .font("Helvetica-Bold")
-    .text("BookVardi", 40, 46)
+    .text(compNameEx, 40, 46)
     .fontSize(8)
     .font("Helvetica")
     .fillColor(mutedColor)
     .text("India's Premier School & Education Marketplace", 40, 70)
-    .text("GSTIN: 09AAACS1429B1Z2 | support@bookvardi.com", 40, 81);
+    .text(`${compAddrEx} | GSTIN: ${compGstinEx}`, 40, 81);
 
   doc
-    .fillColor(darkTeal)
-    .fontSize(13)
+    .fillColor(primaryColor)
+    .fontSize(15)
     .font("Helvetica-Bold")
-    .text("EXCHANGE TAX INVOICE", 260, 44, { width: 295, align: "right" })
+    .text("TAX INVOICE", 260, 42, { width: 295, align: "right" })
     .fontSize(7.5)
     .font("Helvetica")
     .fillColor(mutedColor)
-    .text("Statutory Replacement Tax Invoice & Transfer Slip", 260, 59, { width: 295, align: "right" })
+    .text("Replacement Tax Invoice (Section 31 CGST Act, 2017)", 260, 57, { width: 295, align: "right" })
     .fontSize(8.5)
     .fillColor(primaryColor)
     .font("Helvetica-Bold")
-    .text(`Exchange Ref: ${exchangeInvoiceNo}`, 260, 72, { width: 295, align: "right" })
+    .text(`Invoice No: ${exchangeInvoiceNo}`, 260, 70, { width: 295, align: "right" })
     .font("Helvetica")
     .fillColor(mutedColor)
-    .text(`Original Invoice Ref: ${originalInvoiceNo} (Dated: ${originalOrderDateStr})`, 260, 84, { width: 295, align: "right" })
-    .text(`Date of Replacement: ${exchangeDateStr}`, 260, 96, { width: 295, align: "right" });
+    .text(`Original Ref: ${originalInvoiceNo} (Dated: ${originalOrderDateStr})`, 260, 82, { width: 295, align: "right" })
+    .text(`Date of Replacement: ${exchangeDateStr}`, 260, 94, { width: 295, align: "right" });
 
   // 2. SELLER & CUSTOMER SECTION (Modern Cards)
   const resolvedSeller = resolveInvoiceSellerDetails(order, filterSellerId);
@@ -2298,118 +2334,90 @@ export const generateExchangeInvoicePDF = (order, filterSellerId = null) => {
     .fillColor(mutedColor)
     .text(`Logistics Carrier: ${courierPartner} | AWB / Tracking: ${awbNumber}`, 48, statusBoxY + 25, { width: 498, lineBreak: false, ellipsis: true });
 
-  // 4. RETURNED ITEM VS REPLACEMENT ITEM COMPARISON
+  // 4. TAX INVOICE ITEMIZED REPLACEMENT SUPPLY TABLE (Section 31 CGST Act)
   const tableTop = 241;
 
-  // Section 4A: Item Returned by Customer
-  doc.roundedRect(40, tableTop, 515, 20, 3).fill("#be123c");
+  doc.roundedRect(40, tableTop, 515, 20, 3).fill(darkTeal);
   doc
     .fontSize(7.5)
     .font("Helvetica-Bold")
     .fillColor("#ffffff")
-    .text("1. Original Item Returned by Customer (Credited Value)", 45, tableTop + 5, { width: 245, align: "left" })
-    .text("HSN", 295, tableTop + 5, { width: 55, align: "left" })
-    .text("Qty", 355, tableTop + 5, { width: 45, align: "center" })
-    .text("Original Invoice Value", 410, tableTop + 5, { width: 140, align: "right" });
+    .text("Replacement Item Description & Spec", 45, tableTop + 5, { width: 220, align: "left" })
+    .text("HSN", 270, tableTop + 5, { width: 50, align: "left" })
+    .text("Qty", 325, tableTop + 5, { width: 35, align: "center" })
+    .text("Unit Price", 365, tableTop + 5, { width: 55, align: "right" })
+    .text("Taxable Val", 425, tableTop + 5, { width: 55, align: "right" })
+    .text("Total Price", 485, tableTop + 5, { width: 65, align: "right" });
 
   let y = tableTop + 24;
 
-  if (filterSellerId) {
-    itemsToRender = itemsToRender.filter(
-      (item) => item.sellerId && (item.sellerId._id || item.sellerId).toString() === filterSellerId.toString()
-    );
+  const targetItemId = order.returnRequest?.itemId;
+  let exchItems = Array.isArray(order.items) ? [...order.items] : [];
+  if (targetItemId) {
+    const matched = exchItems.filter(it => String(it._id || it.id || it.productId) === String(targetItemId));
+    if (matched.length > 0) exchItems = matched;
+  } else if (order.returnRequest?.itemName) {
+    const matched = exchItems.filter(it => it.name === order.returnRequest.itemName);
+    if (matched.length > 0) exchItems = matched;
   }
-  if (itemsToRender.length === 0 && Array.isArray(order.items)) {
-    itemsToRender = [...order.items];
+  if (exchItems.length === 0 && order.items?.length > 0) {
+    exchItems = [order.items[0]];
   }
 
-  let totalReturnedVal = 0;
-  itemsToRender.forEach((item, index) => {
-    const rawQty = Number(item.quantity || 1);
-    const itemTotal = (item.finalPrice || item.price || 0) * rawQty;
-    totalReturnedVal += itemTotal;
-    const displayQty = formatInvoiceQuantity(item);
-    const hsn = resolveItemHsnCode(item);
+  const priceDiff = Number(order.returnRequest?.priceDifference || 0);
+  const adjType = order.returnRequest?.priceAdjustmentType || "none";
 
-    const originalSpec = item.size ? `Size: ${item.size}` : (item.quantity ? `${item.quantity} Mtr` : 'Standard');
-
-    const rowBg = index % 2 === 1 ? "#f8fafc" : "#ffffff";
-    doc.rect(40, y - 2, 515, 20).fill(rowBg);
-
-    doc
-      .fontSize(8)
-      .font("Helvetica")
-      .fillColor(primaryColor)
-      .text(`${index + 1}. ${item.name || "Product Item"} (${originalSpec})`, 45, y + 2, { width: 245, lineBreak: false, ellipsis: true })
-      .fillColor(mutedColor)
-      .text(hsn, 295, y + 2, { width: 55, align: "left" })
-      .fillColor(primaryColor)
-      .text(displayQty, 355, y + 2, { width: 45, align: "center" })
-      .font("Helvetica-Bold")
-      .fillColor("#be123c")
-      .text(`-Rs. ${itemTotal.toFixed(2)}`, 410, y + 2, { width: 140, align: "right" });
-
-    y += 20;
-    doc.strokeColor("#e2e8f0").lineWidth(0.5).moveTo(40, y - 2).lineTo(555, y - 2).stroke();
-  });
-
-  // Section 4B: Replacement Item Issued to Customer
-  y += 6;
-  doc.roundedRect(40, y, 515, 20, 3).fill(darkTeal);
-  doc
-    .fontSize(7.5)
-    .font("Helvetica-Bold")
-    .fillColor("#ffffff")
-    .text("2. Fresh Replacement Item Issued to Customer (Debited Value)", 45, y + 5, { width: 245, align: "left" })
-    .text("HSN", 295, y + 5, { width: 55, align: "left" })
-    .text("Qty", 355, y + 5, { width: 45, align: "center" })
-    .text("New Invoice Value", 410, y + 5, { width: 140, align: "right" });
-
-  y += 24;
+  let totalTaxableVal = 0;
   let totalReplacementVal = 0;
-  itemsToRender.forEach((item, index) => {
+
+  exchItems.forEach((item, index) => {
     const rawQty = Number(item.quantity || 1);
-    const isTargetItem = !order.returnRequest?.itemId || String(item._id || item.id) === String(order.returnRequest.itemId);
     let unitReplacementPrice = Number(item.finalPrice || item.price || 0);
-    if (isTargetItem) {
-      if (order.returnRequest?.replacementItemPrice && !isNaN(Number(order.returnRequest.replacementItemPrice))) {
-        unitReplacementPrice = Number(order.returnRequest.replacementItemPrice);
-      } else if (priceDiff !== 0) {
-        unitReplacementPrice = adjType === "extra_payment" 
-          ? (unitReplacementPrice + priceDiff) 
-          : (adjType === "partial_refund" ? unitReplacementPrice - Math.abs(priceDiff) : unitReplacementPrice);
-      }
+    if (order.returnRequest?.replacementItemPrice && !isNaN(Number(order.returnRequest.replacementItemPrice))) {
+      unitReplacementPrice = Number(order.returnRequest.replacementItemPrice);
+    } else if (priceDiff !== 0) {
+      unitReplacementPrice = adjType === "extra_payment" 
+        ? (unitReplacementPrice + priceDiff) 
+        : (adjType === "partial_refund" ? unitReplacementPrice - Math.abs(priceDiff) : unitReplacementPrice);
     }
     const itemTotal = unitReplacementPrice * rawQty;
+    const taxRate = Number(item.gstRate ?? item.taxRate ?? 5);
+    const taxableVal = Math.round((itemTotal / (1 + (taxRate / 100))) * 100) / 100;
+
+    totalTaxableVal += taxableVal;
     totalReplacementVal += itemTotal;
+
     const displayQty = formatInvoiceQuantity(item);
     const hsn = resolveItemHsnCode(item);
 
     const rowBg = index % 2 === 1 ? "#f8fafc" : "#ffffff";
-    doc.rect(40, y - 2, 515, 20).fill(rowBg);
+    doc.rect(40, y - 2, 515, 22).fill(rowBg);
 
     doc
       .fontSize(8)
       .font("Helvetica-Bold")
-      .fillColor(darkTeal)
-      .text(`${index + 1}. ${item.name || "Product Item"} (${targetVariantDisplay})`, 45, y + 2, { width: 245, lineBreak: false, ellipsis: true })
-      .font("Helvetica")
-      .fillColor(mutedColor)
-      .text(hsn, 295, y + 2, { width: 55, align: "left" })
       .fillColor(primaryColor)
-      .text(displayQty, 355, y + 2, { width: 45, align: "center" })
-      .font("Helvetica-Bold")
+      .text(`${index + 1}. ${item.name || "Replacement Item"}`, 45, y + 2, { width: 220, lineBreak: false, ellipsis: true })
+      .font("Helvetica")
+      .fontSize(7)
       .fillColor(darkTeal)
-      .text(`+Rs. ${itemTotal.toFixed(2)}`, 410, y + 2, { width: 140, align: "right" });
+      .text(`Variant: ${targetVariantDisplay}`, 45, y + 11, { width: 220, lineBreak: false, ellipsis: true })
+      .fontSize(8)
+      .fillColor(mutedColor)
+      .text(hsn, 270, y + 2, { width: 50, align: "left" })
+      .fillColor(primaryColor)
+      .text(displayQty, 325, y + 2, { width: 35, align: "center" })
+      .text(`Rs. ${unitReplacementPrice.toFixed(2)}`, 365, y + 2, { width: 55, align: "right" })
+      .text(`Rs. ${taxableVal.toFixed(2)}`, 425, y + 2, { width: 55, align: "right" })
+      .font("Helvetica-Bold")
+      .text(`Rs. ${itemTotal.toFixed(2)}`, 485, y + 2, { width: 65, align: "right" });
 
-    y += 20;
+    y += 24;
     doc.strokeColor("#e2e8f0").lineWidth(0.5).moveTo(40, y - 2).lineTo(555, y - 2).stroke();
   });
 
   // 5. SETTLEMENT & TAX ADJUSTMENT SUMMARY
   y += 8;
-  const priceDiff = Number(order.returnRequest?.priceDifference || 0);
-  const adjType = order.returnRequest?.priceAdjustmentType || "none";
 
   // Left Settlement Card
   const leftCardY = y;
@@ -2441,19 +2449,38 @@ export const generateExchangeInvoicePDF = (order, filterSellerId = null) => {
     .fontSize(8)
     .font("Helvetica")
     .fillColor(mutedColor)
-    .text("Returned Item Credit:", rightLabelX, rightY, { width: labelWidth, align: "right" })
+    .text("Taxable Value:", rightLabelX, rightY, { width: labelWidth, align: "right" })
     .fillColor(primaryColor)
     .font("Helvetica-Bold")
-    .text(`-Rs. ${totalReturnedVal.toFixed(2)}`, rightValX, rightY, { width: valWidth, align: "right" });
+    .text(`Rs. ${totalTaxableVal.toFixed(2)}`, rightValX, rightY, { width: valWidth, align: "right" });
+
+  rightY += 12;
+  const taxesVal = Math.max(0, Math.round((totalReplacementVal - totalTaxableVal) * 100) / 100);
+  doc
+    .font("Helvetica")
+    .fillColor(mutedColor)
+    .text("Taxes (GST Applicable):", rightLabelX, rightY, { width: labelWidth, align: "right" })
+    .fillColor(primaryColor)
+    .font("Helvetica-Bold")
+    .text(`Rs. ${taxesVal.toFixed(2)}`, rightValX, rightY, { width: valWidth, align: "right" });
 
   rightY += 12;
   doc
     .font("Helvetica")
     .fillColor(mutedColor)
-    .text("Replacement Item Value:", rightLabelX, rightY, { width: labelWidth, align: "right" })
+    .text("Replacement Invoice Value:", rightLabelX, rightY, { width: labelWidth, align: "right" })
     .fillColor(primaryColor)
     .font("Helvetica-Bold")
-    .text(`+Rs. ${totalReplacementVal.toFixed(2)}`, rightValX, rightY, { width: valWidth, align: "right" });
+    .text(`Rs. ${totalReplacementVal.toFixed(2)}`, rightValX, rightY, { width: valWidth, align: "right" });
+
+  rightY += 12;
+  doc
+    .font("Helvetica")
+    .fillColor(mutedColor)
+    .text("Original Item Credit Reversal:", rightLabelX, rightY, { width: labelWidth, align: "right" })
+    .fillColor("#be123c")
+    .font("Helvetica-Bold")
+    .text(`-Rs. ${totalReplacementVal.toFixed(2)}`, rightValX, rightY, { width: valWidth, align: "right" });
 
   rightY += 12;
   doc
@@ -2569,15 +2596,16 @@ export const generateSellerFinancialStatementPDF = (seller, orders = [], metrics
   const statementId = `STMT-${String(seller._id || seller.id || 'SELLER').slice(-6).toUpperCase()}-${Date.now().toString().slice(-6)}`;
   const statementDate = new Date().toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
 
+  const isSellerExemptFromAll = isGstExempted(seller.gstNumber);
   const totalGMV = Number(metrics.grossSales || 0);
-  const commissionRate = Number(metrics.commissionRate || seller.commissionRate || seller.commissionPercentage || 10);
-  const platformCut = Number(metrics.platformCut || metrics.portalCommission || (totalGMV * (commissionRate / 100)));
-  const gstOnCommission = Number(metrics.gstOnCommission !== undefined ? metrics.gstOnCommission : Math.round(platformCut * 0.18 * 100) / 100);
-  const tdsAmount = Number(metrics.tds !== undefined ? metrics.tds : Math.round(totalGMV * 0.001 * 100) / 100);
-  const gstTcsAmount = Number(metrics.gstTcs !== undefined ? metrics.gstTcs : Math.round(totalGMV * 0.005 * 100) / 100);
-  const deliveryDeduction = Number(metrics.deliveryDeduction || 0);
-  const totalDeductions = Number(metrics.totalDeductions !== undefined ? metrics.totalDeductions : Math.round((platformCut + gstOnCommission + tdsAmount + gstTcsAmount + deliveryDeduction) * 100) / 100);
-  const netEarnings = Number(metrics.finalSettlement ?? metrics.netEarnings ?? Math.max(0, Math.round((totalGMV - totalDeductions) * 100) / 100));
+  const commissionRate = isSellerExemptFromAll ? 0 : Number(metrics.commissionRate || seller.commissionRate || seller.commissionPercentage || 10);
+  const platformCut = isSellerExemptFromAll ? 0 : Number(metrics.platformCut || metrics.portalCommission || (totalGMV * (commissionRate / 100)));
+  const gstOnCommission = isSellerExemptFromAll ? 0 : Number(metrics.gstOnCommission !== undefined ? metrics.gstOnCommission : Math.round(platformCut * 0.18 * 100) / 100);
+  const tdsAmount = isSellerExemptFromAll ? 0 : Number(metrics.tds !== undefined ? metrics.tds : Math.round(totalGMV * 0.001 * 100) / 100);
+  const gstTcsAmount = isSellerExemptFromAll ? 0 : Number(metrics.gstTcs !== undefined ? metrics.gstTcs : Math.round(totalGMV * 0.005 * 100) / 100);
+  const deliveryDeduction = isSellerExemptFromAll ? 0 : Number(metrics.deliveryDeduction || 0);
+  const totalDeductions = isSellerExemptFromAll ? 0 : Number(metrics.totalDeductions !== undefined ? metrics.totalDeductions : Math.round((platformCut + gstOnCommission + tdsAmount + gstTcsAmount + deliveryDeduction) * 100) / 100);
+  const netEarnings = isSellerExemptFromAll ? totalGMV : Number(metrics.finalSettlement ?? metrics.netEarnings ?? Math.max(0, Math.round((totalGMV - totalDeductions) * 100) / 100));
   const totalGst = Number(metrics.totalGst || 0);
   const codVolume = Number(metrics.codVolume || 0);
   const codCount = Number(metrics.codCount || 0);

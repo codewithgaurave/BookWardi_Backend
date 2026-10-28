@@ -1162,18 +1162,37 @@ export const getPublicPlatformSettings = async (req, res) => {
     const threshold = settings.minOrderFreeShipping !== undefined ? Number(settings.minOrderFreeShipping) : (settings.freeShippingThreshold !== undefined ? Number(settings.freeShippingThreshold) : 999);
     const commRate = settings.defaultCommissionRate !== undefined ? Number(settings.defaultCommissionRate) : 5;
     const universalShippingFee = (settings.shippingFee !== undefined && settings.shippingFee !== null) ? Number(settings.shippingFee) : 49;
+    const universalCodFee = (settings.codFee !== undefined && settings.codFee !== null) ? Number(settings.codFee) : 0;
     res.json({
       freeShippingThreshold: threshold,
       minOrderFreeShipping: threshold,
       shippingFee: universalShippingFee,
+      codFee: universalCodFee,
       defaultCommissionRate: commRate,
       commissionRate: commRate,
-      supportEmail: settings.supportEmail || "support@bookvardi.in",
-      supportPhone: settings.supportPhone || "+91 98765 43210"
+      companyName: settings.companyName || "BOOK VARDI",
+      companyAddress: settings.companyAddress || "Lucknow, Uttar Pradesh - 226001",
+      companyGstin: settings.companyGstin || "09AAACB1234F1Z9",
+      supportEmail: settings.supportEmail || settings.customerCareEmail || "support@bookvardi.in",
+      supportPhone: settings.supportPhone || settings.customerCarePhone || "+91 98765 43210",
+      customerCareEmail: settings.customerCareEmail || settings.supportEmail || "support@bookvardi.in",
+      customerCarePhone: settings.customerCarePhone || settings.supportPhone || "+91 98765 43210",
+      supportHours: settings.supportHours || "Mon - Sat (9:00 AM - 6:00 PM)"
     });
   } catch (error) {
     console.error("Error in getPublicPlatformSettings:", error);
-    res.json({ freeShippingThreshold: 999, minOrderFreeShipping: 999, shippingFee: 49, defaultCommissionRate: 5, commissionRate: 5 });
+    res.json({
+      freeShippingThreshold: 999,
+      minOrderFreeShipping: 999,
+      shippingFee: 49,
+      codFee: 0,
+      defaultCommissionRate: 5,
+      commissionRate: 5,
+      customerCarePhone: "+91 98765 43210",
+      customerCareEmail: "support@bookvardi.in",
+      supportPhone: "+91 98765 43210",
+      supportEmail: "support@bookvardi.in"
+    });
   }
 };
 
@@ -1187,6 +1206,19 @@ export const updatePlatformSettings = async (req, res) => {
     }
     if (updates.shippingFee !== undefined && updates.shippingFee !== null) {
       updates.shippingFee = Number(updates.shippingFee);
+    }
+    if (updates.codFee !== undefined && updates.codFee !== null) {
+      updates.codFee = Number(updates.codFee);
+    }
+    if (updates.customerCarePhone && !updates.supportPhone) {
+      updates.supportPhone = updates.customerCarePhone;
+    } else if (updates.supportPhone && !updates.customerCarePhone) {
+      updates.customerCarePhone = updates.supportPhone;
+    }
+    if (updates.customerCareEmail && !updates.supportEmail) {
+      updates.supportEmail = updates.customerCareEmail;
+    } else if (updates.supportEmail && !updates.customerCareEmail) {
+      updates.customerCareEmail = updates.supportEmail;
     }
     let settings = await PlatformSetting.findOneAndUpdate(
       { key: "global_settings" },
@@ -1219,6 +1251,27 @@ export const updatePlatformSettings = async (req, res) => {
       } catch (announcementSyncErr) {
         console.warn("Announcement threshold sync warning:", announcementSyncErr.message);
       }
+    }
+
+    try {
+      const { broadcastRealtimeEvent } = await import("../services/realtimeService.js");
+      broadcastRealtimeEvent({
+        type: "PLATFORM_SETTINGS_UPDATED",
+        settings: {
+          codFee: settings.codFee,
+          shippingFee: settings.shippingFee,
+          freeShippingThreshold: effectiveThreshold,
+          minOrderFreeShipping: effectiveThreshold,
+          customerCarePhone: settings.customerCarePhone || settings.supportPhone,
+          customerCareEmail: settings.customerCareEmail || settings.supportEmail,
+          supportPhone: settings.supportPhone || settings.customerCarePhone,
+          supportEmail: settings.supportEmail || settings.customerCareEmail,
+          supportHours: settings.supportHours
+        },
+        timestamp: new Date().toISOString()
+      });
+    } catch (sseErr) {
+      console.warn("Settings SSE broadcast error:", sseErr.message);
     }
 
     res.json({ message: "Platform settings updated successfully", settings });

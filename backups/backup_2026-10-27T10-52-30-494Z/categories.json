@@ -1,0 +1,215 @@
+[
+  {
+    "_id": "6ad061dc9f271a4fb0a6cf7a",
+    "name": "School Uniform",
+    "slug": "school-uniform",
+    "description": "",
+    "accentColor": "var(--color-brand-teal)",
+    "bgColor": "var(--color-brand-teal-subtle)",
+    "icon": "Package",
+    "imageUrl": "",
+    "gstPercentage": 5,
+    "subCategories": [
+      {
+        "name": "Pant",
+        "slug": "pant",
+        "description": "",
+        "itemCount": "",
+        "_id": "6ad061dc9f271a4fb0a6cf7b"
+      },
+      {
+        "name": "T-Shirt",
+        "slug": "t-shirt",
+        "description": "",
+        "itemCount": "",
+        "_id": "6ad061dc9f271a4fb0a6cf7c"
+      },
+      {
+        "name": "Shirt",
+        "slug": "shirt",
+        "description": "",
+        "itemCount": "",
+        "_id": "6ad061dc9f271a4fb0a6cf7d"
+      },
+      {
+        "name": "Shoes",
+        "slug": "shoes",
+        "description": "",
+        "itemCount": "",
+        "_id": "6ad061dc9f271a4fb0a6cf7e"
+      },
+      {
+        "name": "Coat",
+        "slug": "coat",
+        "description": "",
+        "itemCount": "",
+        "_id": "6ad061dc9f271a4fb0a6cf7f"
+      }
+    ],
+    "productCount": 0,
+    "sortOrder": 0,
+    "createdAt": "2026-10-15T05:17:16.688Z",
+    "updatedAt": "2026-10-15T05:17:16.688Z",
+    "__v": 0
+  },
+  {
+    "_id": "6ad062029f271a4fb0a6cfb8",
+    "name": "Pant",
+    "slug": "pant",
+    "description": "",
+    "accentColor": "var(--color-brand-teal)",
+    "bgColor": "var(--color-brand-teal-subtle)",
+    "icon": "Package",
+    "imageUrl": "",
+    "gstPercentage": 5,
+    "subCategories": [
+      {
+        "name": "Casual",
+        "slug": "casual",
+        "description": "",
+        "itemCount": "",
+        "_id": "6ad062029f271a4fb0a6cfb9"
+      },
+      {
+        "name": "Jeans",
+        "slug": "jeans",
+        "description": "",
+        "itemCount": "",
+        "_id": "6ad062029f271a4fb0a6cfba"
+      },
+      {
+        "name": "Ancle",
+        "slug": "ancle",
+        "description": "",
+        "itemCount": "",
+        "_id": "6ad062029f271a4fb0a6cfbb"
+      }
+    ],
+    "productCount": 0,
+    "sortOrder": 0,
+    "createdAt": "2026-10-15T05:17:54.468Z",
+    "updatedAt": "2026-10-15T05:17:54.468Z",
+    "__v": 0
+  },
+  {
+    "_id": "6ad1b6f8344d279c5d38877e",
+    "name": "Book",
+    "slug": "book",
+    "description": "",
+    "accentColor": "var(--color-brand-teal)",
+    "bgColor": "var(--color-brand-teal-subtle)",
+    "icon": "Package",
+    "imageUrl": "",
+    "gstPercentage": 0,
+    "subCategories": [
+      {
+        "name": "Nursery",
+        "slug": "nursery",
+        "description": "",
+        "itemCount": "",
+        "_id": "6adbb5ce2d5a6508dba1ccba"
+      },
+      {
+        "name": "KG",
+        "slug": "kg",
+        "description": "",
+        "itemCount": "",
+        "_id": "6adbb5ce2d5a6508dba1ccbb"
+      },
+      {
+        "name": "Matrix",
+        "slug": "matrix",
+        "description": "",
+        "itemCount": "",
+        "_id": "6adbb5ce2d5a6508dba1ccbc"
+      },
+      {
+        "name": "9th",
+        "slug": "9th",
+        "description": "",
+        "itemCount": "",
+        "_id": "6adbb5ce2d5a6508dba1ccbd"
+      }
+    ],
+    "productCount": 0,
+    "sortOrder": 0,
+    "createdAt": "2026-10-16T05:32:40.082Z",
+    "updatedAt": "2026-10-23T19:30:22.321Z",
+    "__v": 0
+  },
+  {
+    "_id": "6ad21548f3ddc7b74d7a81e7",
+    "name": "Footwear",
+    "slug": "footwear",
+    "description": "",
+    "accentColor": "var(--color-brand-teal)",
+    "bgColor": "var(--color-brand-teal-subtle)",
+    "icon": "Package",
+    "imageUrl": "",
+    "gstPercentage": 12,
+    "subCategories": [
+      {
+        "name": "School Footwear",
+        "slug": "school-footwear",
+        "description": "",
+        "itemCount": "",
+        "_id": "6ad21548f3ddc7b74d7a81e8"
+      }
+    ],
+    "productCount": 0,
+    "sortOrder": 0,
+    "createdAt": "2026-10-16T12:15:04.081Z",
+    "updatedAt": "2026-10-16T12:15:04.081Z",
+    "__v": 0
+  },
+  {
+    "_id": "6ad47196e07ef287b371e902",
+    "name": "Jacket",
+    "slug": "jacket",
+    "description": "",
+    "accentColor": "var(--color-brand-teal)",
+    "bgColor": "var(--color-brand-teal-subtle)",
+    "icon": "Package",
+    "imageUrl": "",
+    "gstPercentage": 5,
+    "subCategories": [
+      {
+        "name": "Jacket",
+        "slug": "jacket",
+        "description": "",
+        "itemCount": "",
+        "_id": "6ad47196e07ef287b371e903"
+      }
+    ],
+    "productCount": 0,
+    "sortOrder": 0,
+    "createdAt": "2026-10-18T07:13:26.149Z",
+    "updatedAt": "2026-10-18T07:13:26.149Z",
+    "__v": 0
+  },
+  {
+    "_id": "6ad472ec69a45f4bc830e47e",
+    "name": "Cap",
+    "slug": "cap",
+    "description": "",
+    "accentColor": "var(--color-brand-teal)",
+    "bgColor": "var(--color-brand-teal-subtle)",
+    "icon": "Package",
+    "imageUrl": "",
+    "gstPercentage": 5,
+    "subCategories": [
+      {
+        "name": "cap",
+        "slug": "cap",
+        "description": "",
+        "itemCount": "",
+        "_id": "6ad473ac69a45f4bc830e98f"
+      }
+    ],
+    "productCount": 0,
+    "sortOrder": 0,
+    "createdAt": "2026-10-18T07:19:08.142Z",
+    "updatedAt": "2026-10-18T07:22:20.086Z",
+    "__v": 0
+  }
+]

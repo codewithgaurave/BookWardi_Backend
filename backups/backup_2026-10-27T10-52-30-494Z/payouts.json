@@ -1,0 +1,21 @@
+[
+  {
+    "_id": "6acf55f782e428f288dda4ce",
+    "sellerId": "6ab0c5b28b3778b8839bfa15",
+    "amount": 1227.99,
+    "bankDetails": {
+      "accountHolderName": "Shyam",
+      "accountNumber": "123123123123",
+      "ifscCode": "SBI0000012",
+      "bankName": "SBI"
+    },
+    "status": "pending",
+    "transactionReference": "",
+    "rejectionReason": "",
+    "notes": "",
+    "payoutId": "PAY-MV7YDC7U",
+    "createdAt": "2026-10-14T10:14:15.070Z",
+    "updatedAt": "2026-10-14T10:14:15.070Z",
+    "__v": 0
+  }
+]

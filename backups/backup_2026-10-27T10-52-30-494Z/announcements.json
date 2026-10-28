@@ -1,0 +1,44 @@
+[
+  {
+    "_id": "6acde44d3d38da98ede837ea",
+    "text": "Free Delivery on Orders Over ₹401",
+    "badge": "FREE DELIVERY",
+    "link": "/offers",
+    "priority": 1,
+    "isActive": true,
+    "expiryDate": null,
+    "bgColor": "#0f766e",
+    "textColor": "#ffffff",
+    "__v": 0,
+    "createdAt": "2026-10-13T07:57:01.585Z",
+    "updatedAt": "2026-10-20T15:29:14.844Z"
+  },
+  {
+    "_id": "6acde44d3d38da98ede837eb",
+    "text": "Exclusive Student & School Discounts Available",
+    "badge": "DISCOUNT",
+    "link": "/offers",
+    "priority": 2,
+    "isActive": true,
+    "expiryDate": null,
+    "bgColor": "#0f766e",
+    "textColor": "#ffffff",
+    "__v": 0,
+    "createdAt": "2026-10-13T07:57:01.587Z",
+    "updatedAt": "2026-10-13T07:57:01.587Z"
+  },
+  {
+    "_id": "6acde44d3d38da98ede837ec",
+    "text": "7 Days Return & Exchange Assurance",
+    "badge": "TRUST",
+    "link": "/about-us",
+    "priority": 3,
+    "isActive": true,
+    "expiryDate": null,
+    "bgColor": "#0f766e",
+    "textColor": "#ffffff",
+    "__v": 0,
+    "createdAt": "2026-10-13T07:57:01.588Z",
+    "updatedAt": "2026-10-22T14:22:17.468Z"
+  }
+]

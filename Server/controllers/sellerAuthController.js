@@ -9,6 +9,7 @@ import fs from "fs";
 import path from "path";
 import crypto from "crypto";
 import { sendFast2SmsOtp } from "../services/smsService.js";
+import { broadcastRealtimeEvent } from "../services/realtimeService.js";
 
 const JWT_SECRET = process.env.JWT_SECRET || "your-secret-key";
 const sellerOtpStore = new Map();
@@ -174,6 +175,20 @@ export const registerSeller = async (req, res) => {
       authorizedSignatoryConfirmation: req.body.authorizedSignatoryConfirmation === true || req.body.authorizedSignatoryConfirmation === "true"
     };
 
+    if (!passbookDoc && !existingSeller?.documents?.passbookDoc && !req.body.passbookDoc) {
+      return res.status(400).json({
+        success: false,
+        message: "Bank Passbook or Cancelled Cheque document is mandatory for seller onboarding."
+      });
+    }
+
+    if (!agreementsObj.acceptedTerms || !agreementsObj.acceptedCommissionRate || !agreementsObj.acceptedReturnPolicy) {
+      return res.status(400).json({
+        success: false,
+        message: "All mandatory merchant agreements (Terms of Service, Commission Schedule, and Student Exchange Assurance) must be accepted before submitting."
+      });
+    }
+
     if (existingSeller) {
       existingSeller.name = name || existingSeller.name;
       existingSeller.storeName = storeName || existingSeller.storeName;
@@ -209,6 +224,7 @@ export const registerSeller = async (req, res) => {
         msmeRegistrationNumber: msmeRegistrationNumber || existingSeller.documents?.msmeRegistrationNumber || "",
         cinNumber: cinNumber || existingSeller.documents?.cinNumber || "",
         addressProofDoc: addressProofDoc || existingSeller.documents?.addressProofDoc || "",
+        passbookDoc: passbookDoc || existingSeller.documents?.passbookDoc || "",
         profilePhoto: profilePhoto || existingSeller.documents?.profilePhoto || ""
       };
       await existingSeller.save();
@@ -230,6 +246,18 @@ export const registerSeller = async (req, res) => {
         }
       }
 
+      try {
+        broadcastRealtimeEvent({
+          type: "SELLER_REGISTERED",
+          sellerId: existingSeller._id,
+          storeName: existingSeller.storeName,
+          status: existingSeller.status,
+          timestamp: new Date().toISOString()
+        });
+      } catch (sseErr) {
+        console.warn("SSE broadcast error:", sseErr.message);
+      }
+
       return res.status(200).json({
         message: "Seller application updated successfully! Pending Admin review.",
         sellerId: existingSeller._id,
@@ -241,7 +269,7 @@ export const registerSeller = async (req, res) => {
     // Validate self delivery radius if self delivery is chosen
     const { selfDelivery, maxDeliveryRadiusKm, thirdPartyDelivery, latitude, longitude, formattedAddress } = req.body;
     const isSelfDelivery = selfDelivery === undefined || selfDelivery === true || selfDelivery === "true";
-    const parsedRadius = maxDeliveryRadiusKm ? parseFloat(maxDeliveryRadiusKm) : 10;
+    const parsedRadius = (maxDeliveryRadiusKm !== undefined && maxDeliveryRadiusKm !== null && String(maxDeliveryRadiusKm).trim() !== "") ? parseFloat(maxDeliveryRadiusKm) : 10;
     if (isSelfDelivery && (isNaN(parsedRadius) || parsedRadius <= 0)) {
       return res.status(400).json({
         message: "Please specify a valid self-delivery radius in KM (e.g. 5, 10, 15 km)."
@@ -332,6 +360,18 @@ export const registerSeller = async (req, res) => {
       } catch (uErr) {
         console.warn("User sellerStatus sync error on register:", uErr.message);
       }
+    }
+
+    try {
+      broadcastRealtimeEvent({
+        type: "SELLER_REGISTERED",
+        sellerId: newSeller._id,
+        storeName: newSeller.storeName,
+        status: newSeller.status,
+        timestamp: new Date().toISOString()
+      });
+    } catch (sseErr) {
+      console.warn("SSE broadcast error:", sseErr.message);
     }
 
     res.status(201).json({
@@ -610,15 +650,32 @@ export const updateSellerProfile = async (req, res) => {
       };
     }
 
-    // Bank Details update
-    if (bankDetails || bankAccountHolder || bankAccountNumber || bankIfscCode || bankName || bankBranch || branchName) {
-      updates.bankDetails = {
+    // Bank Details update & Critical KYC verification check
+    let isCriticalDetailChanged = false;
+
+    if (bankDetails || bankAccountHolder || bankAccountNumber || bankIfscCode || bankName || bankBranch || branchName || req.body.accountType) {
+      const newBankDetails = {
         accountHolderName: bankDetails?.accountHolderName || bankDetails?.bankAccountHolder || bankAccountHolder || seller.bankDetails?.accountHolderName || "",
         accountNumber: bankDetails?.accountNumber || bankDetails?.bankAccountNumber || bankAccountNumber || seller.bankDetails?.accountNumber || "",
         ifscCode: bankDetails?.ifscCode || bankDetails?.bankIfscCode || bankIfscCode || seller.bankDetails?.ifscCode || "",
         bankName: bankDetails?.bankName || bankName || seller.bankDetails?.bankName || "",
-        branchName: bankDetails?.branchName || bankDetails?.bankBranch || bankBranch || branchName || seller.bankDetails?.branchName || ""
+        branchName: bankDetails?.branchName || bankDetails?.bankBranch || bankBranch || branchName || seller.bankDetails?.branchName || "",
+        accountType: bankDetails?.accountType || req.body.accountType || seller.bankDetails?.accountType || "Savings Account"
       };
+
+      const oldAcct = String(seller.bankDetails?.accountNumber || "").trim();
+      const newAcct = String(newBankDetails.accountNumber || "").trim();
+      const oldIfsc = String(seller.bankDetails?.ifscCode || "").trim().toUpperCase();
+      const newIfsc = String(newBankDetails.ifscCode || "").trim().toUpperCase();
+      const oldHolder = String(seller.bankDetails?.accountHolderName || "").trim().toLowerCase();
+      const newHolder = String(newBankDetails.accountHolderName || "").trim().toLowerCase();
+
+      // If bank account was already present and payout destination details changed, or new bank details added:
+      if (newAcct && (!oldAcct || newAcct !== oldAcct || newIfsc !== oldIfsc || (newHolder && newHolder !== oldHolder))) {
+        isCriticalDetailChanged = true;
+      }
+
+      updates.bankDetails = newBankDetails;
     }
 
     if (deliveryPreferences) updates.deliveryPreferences = deliveryPreferences;
@@ -643,6 +700,14 @@ export const updateSellerProfile = async (req, res) => {
       docUpdates.addressProofDoc = uploadedAddressProof;
     }
 
+    let uploadedPassbook = files.passbookDoc?.[0] ? `/uploads/documents/${files.passbookDoc[0].filename}` : null;
+    if (!uploadedPassbook && req.body.passbookDoc) uploadedPassbook = saveBase64ToFile(req.body.passbookDoc, "documents", "passbook");
+    if (!uploadedPassbook && documents?.passbookDoc) uploadedPassbook = saveBase64ToFile(documents.passbookDoc, "documents", "passbook");
+    if (uploadedPassbook) {
+      docUpdates.passbookDoc = uploadedPassbook;
+      isCriticalDetailChanged = true;
+    }
+
     let uploadedAadhaar = files.aadhaarDoc?.[0] ? `/uploads/documents/${files.aadhaarDoc[0].filename}` : null;
     if (!uploadedAadhaar && req.body.aadhaarDoc) uploadedAadhaar = saveBase64ToFile(req.body.aadhaarDoc, "documents", "aadhaar");
     if (uploadedAadhaar) docUpdates.aadhaarDoc = uploadedAadhaar;
@@ -655,12 +720,30 @@ export const updateSellerProfile = async (req, res) => {
       docUpdates.aadhaarNumber = req.body.aadhaarNumber || req.body.ownerAadhaarLast4;
     }
     if (req.body.panNumber || req.body.ownerPan || req.body.businessPan || req.body.pan) {
-      docUpdates.panNumber = req.body.panNumber || req.body.ownerPan || req.body.businessPan || req.body.pan;
+      const oldPan = String(seller.documents?.panNumber || "").trim().toUpperCase();
+      const newPan = String(req.body.panNumber || req.body.ownerPan || req.body.businessPan || req.body.pan || "").trim().toUpperCase();
+      if (oldPan && newPan && oldPan !== newPan) isCriticalDetailChanged = true;
+      docUpdates.panNumber = newPan;
     }
     if (msmeRegistrationNumber !== undefined) docUpdates.msmeRegistrationNumber = msmeRegistrationNumber;
     if (cinNumber !== undefined) docUpdates.cinNumber = cinNumber;
 
+    // Check if GSTIN changed
+    const oldGst = String(seller.gstNumber || "").trim().toUpperCase();
+    const newGst = String(updates.gstNumber || "").trim().toUpperCase();
+    if (oldGst && newGst && oldGst !== newGst) {
+      isCriticalDetailChanged = true;
+    }
+
     updates.documents = docUpdates;
+
+    // If Bank Details, Cheque / Passbook, GSTIN, or PAN changed on an active seller,
+    // require Admin Approval before activating the new payout credentials!
+    if (isCriticalDetailChanged) {
+      updates.status = "pending";
+      updates.bankVerificationStatus = "pending";
+      updates.rejectionReason = "";
+    }
 
     // Location update
     if (latitude !== undefined && longitude !== undefined) {
@@ -681,9 +764,44 @@ export const updateSellerProfile = async (req, res) => {
       new: true
     }).select("-password");
 
+    // Also synchronize user.sellerStatus if status was changed to pending
+    if (updates.status === "pending") {
+      try {
+        const cleanDigits = String(updatedSeller.phone || "").replace(/\D/g, "").slice(-10);
+        await User.updateMany(
+          {
+            $or: [
+              ...(cleanDigits ? [{ phone: { $regex: cleanDigits } }] : []),
+              { email: updatedSeller.email.toLowerCase() }
+            ]
+          },
+          { $set: { sellerStatus: "pending" } }
+        );
+      } catch (uErr) {
+        console.warn("User sellerStatus sync error on bank update:", uErr.message);
+      }
+    }
+
+    try {
+      broadcastRealtimeEvent({
+        type: updates.status === "pending" ? "SELLER_STATUS_CHANGED" : "SELLER_UPDATED",
+        sellerId: updatedSeller._id,
+        storeName: updatedSeller.storeName,
+        status: updatedSeller.status,
+        timestamp: new Date().toISOString()
+      });
+    } catch (sseErr) {
+      console.warn("SSE broadcast error:", sseErr.message);
+    }
+
+    const responseMessage = updates.status === "pending"
+      ? "Bank account / KYC details updated! Your account is now pending Admin approval before payout settlements are activated."
+      : "Profile updated successfully";
+
     res.json({
       success: true,
-      message: "Profile updated successfully",
+      message: responseMessage,
+      requiresAdminApproval: updates.status === "pending",
       seller: updatedSeller
     });
   } catch (error) {
@@ -1222,6 +1340,19 @@ export const updateSellerApplication = async (req, res) => {
     updates.documents = docUpdates;
 
     const updatedSeller = await Seller.findByIdAndUpdate(sellerId, updates, { new: true });
+
+    try {
+      broadcastRealtimeEvent({
+        type: "SELLER_UPDATED",
+        sellerId: updatedSeller._id,
+        storeName: updatedSeller.storeName,
+        status: updatedSeller.status,
+        timestamp: new Date().toISOString()
+      });
+    } catch (sseErr) {
+      console.warn("SSE broadcast error:", sseErr.message);
+    }
+
     res.json({
       success: true,
       message: "Seller application updated successfully! Pending review.",

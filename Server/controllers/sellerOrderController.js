@@ -8,6 +8,7 @@ import { sendDeliveryPartnerWhatsAppDispatch } from "../services/whatsappService
 import { broadcastRealtimeEvent } from "../services/realtimeService.js";
 import { calculateSellerSettlement } from "../services/settlementService.js";
 import { sendOrderStatusSms } from "../services/smsService.js";
+import { getSellerInvoicePrefix, formatSellerInvoiceNumber } from "../utils/invoiceHelper.js";
 
 // Global in-memory cache for ultra-fast seller orders
 const sellerOrdersCache = new Map(); // sellerKey -> { data, timestamp }
@@ -428,9 +429,13 @@ export const formatSellerSingleOrder = (o, scope = null) => {
   const customerShippingFee = Number(o.shippingFee ?? o.shippingCost ?? o.shippingAmount ?? 0);
   const resolvedBorneBy = o.deliveryChargeBorneBy || (ordTotalVal >= Number(o.freeDeliveryThreshold ?? 401) ? 'admin' : (customerShippingFee > 0 ? 'customer' : 'seller'));
 
+  const sellerGstVal = scope?.gstNumber || o.sellerDetails?.gstNumber || orderItems[0]?.sellerDetails?.gstNumber || "";
   const orderSettlement = calculateSellerSettlement(settlementGross, {
     baseAmount: settlementGross,
     commissionRate: Number(o.commissionRate ?? 10),
+    sellerGstNumber: sellerGstVal,
+    sellerStoreName: o.sellerStoreName || o.storeName || scope?.storeName || "",
+    sellerPhone: scope?.phone || o.sellerPhone || "",
     paymentMethod: o.paymentMethod || "UPI",
     deliveryMode: o.deliveryMode || (o.selfDeliveryDetails?.deliveryPersonName ? "self_delivery" : "third_party"),
     courierName: o.courierName,
@@ -450,6 +455,9 @@ export const formatSellerSingleOrder = (o, scope = null) => {
     id: rawOrderId,
     _id: o._id,
     orderId: rawOrderId,
+    invoiceNumber: o.invoiceNumber || formatSellerInvoiceNumber(getSellerInvoicePrefix(scope?.storeName || o.sellerStoreName), 1),
+    sellerInvoiceNo: o.sellerInvoiceNo || o.invoiceNumber || formatSellerInvoiceNumber(getSellerInvoicePrefix(scope?.storeName || o.sellerStoreName), 1),
+    sellerSequence: o.sellerSequence || 1,
     customerName: customerObj.name || o.userName || o.customerName || "Customer",
     customerEmail: customerObj.email || o.userEmail || o.customerEmail || "",
     customerPhone: customerObj.phone || o.userPhone || o.customerPhone || "",
@@ -534,6 +542,9 @@ export const formatSellerSingleOrder = (o, scope = null) => {
                               item.settlementStatus === "cancelled";
       const itemStl = calculateSellerSettlement(itemGross, {
         commissionRate: Number(item.commissionRate ?? o.commissionRate ?? 10),
+        sellerGstNumber: sellerGstVal,
+        sellerStoreName: item.sellerStoreName || item.storeName || o.sellerStoreName || o.storeName || scope?.storeName || "",
+        sellerPhone: scope?.phone || o.sellerPhone || "",
         paymentMethod: o.paymentMethod || "UPI",
         deliveryMode: item.deliveryType || o.deliveryMode || (o.selfDeliveryDetails?.deliveryPersonName ? "self_delivery" : "third_party"),
         courierName: o.courierName || item.thirdPartyDetails?.courierName,
@@ -623,6 +634,29 @@ export const getSellerOrders = async (req, res) => {
 
     const scope = await getExpandedSellerScope(req);
     const orders = await Order.find(scope.filter).sort({ createdAt: -1 }).lean();
+
+    // Assign sequential invoice numbers for orders lacking one (e.g. NSD01, NSD02...)
+    const sellerStoreForInvoice = scope?.storeName || scope?.name || "Store";
+    const prefix = getSellerInvoicePrefix(sellerStoreForInvoice);
+    const totalCount = orders.length;
+
+    orders.forEach((o, idxFromNewest) => {
+      // In reverse-chronological order (newest first), chronological rank = totalCount - idxFromNewest
+      const chronoSeq = totalCount - idxFromNewest;
+      if (!o.invoiceNumber || o.invoiceNumber.startsWith("INV-")) {
+        const computedInvoiceNo = formatSellerInvoiceNumber(prefix, chronoSeq);
+        o.invoiceNumber = computedInvoiceNo;
+        o.sellerInvoiceNo = computedInvoiceNo;
+        o.sellerSequence = chronoSeq;
+
+        // Persist to DB in background so subsequent queries find it
+        Order.updateOne(
+          { _id: o._id },
+          { $set: { invoiceNumber: computedInvoiceNo, sellerInvoiceNo: computedInvoiceNo, sellerSequence: chronoSeq } }
+        ).exec().catch(() => {});
+      }
+    });
+
     const formattedOrders = orders.map((o) => formatSellerSingleOrder(o, scope)).filter(Boolean);
 
     if (sellerId) {
@@ -890,6 +924,7 @@ export const updateSellerOrderItemStatus = async (req, res) => {
 
     const itemStl = calculateSellerSettlement(itemGross, {
       commissionRate: Number(item.commissionRate ?? order.commissionRate ?? sellerInfo.commissionRate ?? 10),
+      sellerGstNumber: sellerInfo.gstNumber || "",
       paymentMethod: order.paymentMethod || "UPI",
       deliveryMode: resolvedMode,
       courierName: order.courierName || item.thirdPartyDetails?.courierName,
@@ -1242,6 +1277,7 @@ export const updateSellerOrderStatus = async (req, res) => {
 
         const itemStl = calculateSellerSettlement(itemGross, {
           commissionRate: Number(itemObj.commissionRate ?? order.commissionRate ?? sellerInfo.commissionRate ?? 10),
+          sellerGstNumber: sellerInfo.gstNumber || "",
           paymentMethod: order.paymentMethod || "UPI",
           deliveryMode: resolvedMode,
           courierName: order.courierName || courierName,

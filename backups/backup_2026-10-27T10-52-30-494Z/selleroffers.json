@@ -1,0 +1,62 @@
+[
+  {
+    "_id": "6ad1a9e89a648ed9c591fd90",
+    "sellerId": "6aafbdd6835c0cae217d2220",
+    "title": "uniform20%",
+    "code": "UNIFORM20",
+    "description": "",
+    "discountType": "percentage",
+    "discountValue": 20,
+    "minOrderAmount": 651,
+    "maxDiscount": 250,
+    "startDate": "2026-10-16T00:00:00.000Z",
+    "endDate": "2026-12-31T00:00:00.000Z",
+    "status": "active",
+    "createdRole": "seller",
+    "applicableScope": "specific_product",
+    "applicableProducts": [
+      "6ad1a6489a648ed9c591f513"
+    ],
+    "applicableKits": [],
+    "specificProductId": "6ad1a6489a648ed9c591f513",
+    "specificProductName": "ghe shirt cloth",
+    "specificKitId": "",
+    "specificKitTitle": "",
+    "specificKitImage": "",
+    "usageLimit": 500,
+    "usageCount": 3,
+    "createdAt": "2026-10-16T04:36:56.562Z",
+    "updatedAt": "2026-10-22T15:53:02.506Z",
+    "__v": 0
+  },
+  {
+    "_id": "6adbb7072d5a6508dba1e691",
+    "sellerId": "6aafbdd6835c0cae217d2220",
+    "title": "Ncert books",
+    "code": "NCERT10",
+    "description": "",
+    "discountType": "percentage",
+    "discountValue": 10,
+    "minOrderAmount": 199,
+    "maxDiscount": 250,
+    "startDate": "2026-10-23T00:00:00.000Z",
+    "endDate": "2026-12-31T00:00:00.000Z",
+    "status": "active",
+    "createdRole": "seller",
+    "applicableScope": "specific_product",
+    "applicableProducts": [
+      "6adbb6432d5a6508dba1d622"
+    ],
+    "applicableKits": [],
+    "specificProductId": "6adbb6432d5a6508dba1d622",
+    "specificProductName": "Ncert 9th math",
+    "specificKitId": "",
+    "specificKitTitle": "",
+    "specificKitImage": "",
+    "usageLimit": 500,
+    "usageCount": 1,
+    "createdAt": "2026-10-23T19:35:35.726Z",
+    "updatedAt": "2026-10-23T19:36:20.602Z",
+    "__v": 0
+  }
+]
