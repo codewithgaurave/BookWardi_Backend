@@ -386,6 +386,9 @@ const orderSchema = new mongoose.Schema(
       default: ""
     },
     returnRequest: {
+      itemId: { type: mongoose.Schema.Types.Mixed, default: null },
+      itemName: { type: String, default: "" },
+      productId: { type: mongoose.Schema.Types.Mixed, default: null },
       type: {
         type: String,
         enum: ["return", "exchange", null],

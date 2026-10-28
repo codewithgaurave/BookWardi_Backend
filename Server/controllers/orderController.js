@@ -3637,7 +3637,7 @@ export const requestReturnExchange = async (req, res) => {
           const reqName = req.body.itemName ? String(req.body.itemName).trim().toLowerCase() : '';
           const matchName = reqName && String(it.name || '').trim().toLowerCase() === reqName;
           return matchId || matchName;
-        }) || order.items[0])
+        }) || (order.items.length === 1 ? order.items[0] : null))
       : null;
 
     const statusLower = String(order.status || "").toLowerCase().trim();
@@ -3772,10 +3772,8 @@ export const requestReturnExchange = async (req, res) => {
     if (Array.isArray(order.items)) {
       if (targetItem) {
         targetItem.status = itemStatus;
-      } else {
-        order.items.forEach(item => {
-          item.status = itemStatus;
-        });
+      } else if (order.items.length === 1) {
+        order.items[0].status = itemStatus;
       }
     }
 
@@ -3799,8 +3797,9 @@ export const requestReturnExchange = async (req, res) => {
     const effectiveExchangeDisplay = (isUnstitched && exchangeLength) ? `${exchangeLength} Meter(s)` : (exchangeSize || "");
 
     order.returnRequest = {
-      itemId: targetItem ? (targetItem._id || targetItem.id) : undefined,
-      itemName: targetItem ? targetItem.name : undefined,
+      itemId: targetItem ? (targetItem._id || targetItem.id || targetItem.productId) : req.body.itemId,
+      itemName: targetItem ? targetItem.name : req.body.itemName,
+      productId: targetItem ? (targetItem.productId || targetItem.id) : undefined,
       type,
       reason: reason || "Customer request",
       comment: comment || "",
@@ -3979,12 +3978,19 @@ export const updateReturnExchangeStatus = async (req, res) => {
     }
     // ─────────────────────────────────────────────────────────────────────────
 
-    const targetItemId = order.returnRequest?.itemId;
-    const targetItem = Array.isArray(order.items) && targetItemId
-      ? order.items.find(it => String(it._id || it.id || it.productId) === String(targetItemId))
-      : (Array.isArray(order.items) && order.returnRequest?.itemName
-        ? order.items.find(it => it.name === order.returnRequest.itemName)
-        : null);
+    const targetItemId = String(order.returnRequest?.itemId || order.returnRequest?.productId || '').trim();
+    const targetItemName = String(order.returnRequest?.itemName || '').trim().toLowerCase();
+    const targetItem = (Array.isArray(order.items) && order.items.length > 0)
+      ? order.items.find(it => {
+          if (targetItemId && (String(it._id || '') === targetItemId || String(it.id || '') === targetItemId || String(it.productId || '') === targetItemId)) {
+            return true;
+          }
+          if (targetItemName && String(it.name || '').trim().toLowerCase() === targetItemName) {
+            return true;
+          }
+          return false;
+        })
+      : null;
 
     let canonicalReturnStatus = rawStatus;
     let overallStatus = order.overallStatus;
@@ -4254,10 +4260,26 @@ export const updateReturnExchangeStatus = async (req, res) => {
     if (Array.isArray(order.items)) {
       if (targetItem) {
         targetItem.status = title;
-      } else {
-        order.items.forEach(item => {
-          item.status = title;
+        // In multi-item orders, ensure non-target items retain Delivered status and are not tainted by exchange
+        order.items.forEach(it => {
+          if (it !== targetItem) {
+            const s = String(it.status || '').toLowerCase();
+            if (s.includes('exchange') || s.includes('pickup scheduled')) {
+              it.status = 'Delivered';
+            }
+          }
         });
+      } else if (order.items.length === 1) {
+        order.items[0].status = title;
+      } else {
+        // In multi-item orders, NEVER overwrite all items! Find the item that already has return/exchange
+        const cand = order.items.find(it => {
+          const s = String(it.status || '').toLowerCase();
+          return s.includes('exchange') || s.includes('return') || s.includes('pickup');
+        });
+        if (cand) {
+          cand.status = title;
+        }
       }
     }
 

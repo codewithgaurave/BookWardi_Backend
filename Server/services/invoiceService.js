@@ -1821,15 +1821,37 @@ export const generateCreditNotePDF = (order, filterSellerId = null) => {
 
   let itemsToRender = Array.isArray(order.items) ? [...order.items] : [];
 
-  // Item-level filtering for returns / exchange
-  const returnItemId = order.returnRequest?.itemId;
-  if ((isReturn || isExchange) && returnItemId) {
-    const matchedItem = itemsToRender.find((it) => String(it._id || it.id) === String(returnItemId));
+  // Item-level filtering for returns / exchange:
+  // Statutory rule: The Credit Note must strictly reverse ONLY the single product that was returned/exchanged!
+  if (isReturn || isExchange) {
+    const reqTargetId = String(order.returnRequest?.itemId || order.returnRequest?.productId || '').trim();
+    const reqTargetName = String(order.returnRequest?.itemName || '').trim().toLowerCase();
+    
+    let matchedItem = null;
+    if (reqTargetId) {
+      matchedItem = itemsToRender.find((it) => String(it._id || it.id || it.productId || '') === reqTargetId);
+    }
+    if (!matchedItem && reqTargetName) {
+      matchedItem = itemsToRender.find((it) => {
+        const n = String(it.name || '').trim().toLowerCase();
+        return n === reqTargetName || (reqTargetName.length > 3 && n.includes(reqTargetName)) || (n.length > 3 && reqTargetName.includes(n));
+      });
+    }
+    if (!matchedItem && itemsToRender.length === 1) {
+      matchedItem = itemsToRender[0];
+    }
+    if (!matchedItem) {
+      matchedItem = itemsToRender.find((it) => {
+        const s = String(it.status || '').toLowerCase();
+        return s.includes('exchange') || s.includes('return');
+      });
+    }
+
     if (matchedItem) {
       itemsToRender = [matchedItem];
+    } else if (itemsToRender.length > 0) {
+      itemsToRender = [itemsToRender[0]];
     }
-  } else if ((isReturn || isExchange) && itemsToRender.some((it) => String(it.status || "").toLowerCase().includes("return") || String(it.status || "").toLowerCase().includes("exchange"))) {
-    itemsToRender = itemsToRender.filter((it) => String(it.status || "").toLowerCase().includes("return") || String(it.status || "").toLowerCase().includes("exchange"));
   }
 
   // Seller filtering
@@ -2268,10 +2290,24 @@ export const generateExchangeInvoicePDF = (order, filterSellerId = null) => {
 
   // 3. EXCHANGE SUMMARY BOX & ITEM RESOLUTION
   let itemsToRender = Array.isArray(order.items) ? [...order.items] : [];
-  const exchangeItemId = order.returnRequest?.itemId;
-  if (exchangeItemId) {
-    const matched = itemsToRender.find(it => String(it._id || it.id) === String(exchangeItemId));
-    if (matched) itemsToRender = [matched];
+  const reqTargetId = String(order.returnRequest?.itemId || order.returnRequest?.productId || '').trim();
+  const reqTargetName = String(order.returnRequest?.itemName || '').trim().toLowerCase();
+
+  let matchedTargetItem = null;
+  if (reqTargetId) {
+    matchedTargetItem = itemsToRender.find(it => String(it._id || it.id || it.productId || '') === reqTargetId);
+  }
+  if (!matchedTargetItem && reqTargetName) {
+    matchedTargetItem = itemsToRender.find(it => {
+      const n = String(it.name || '').trim().toLowerCase();
+      return n === reqTargetName || (reqTargetName.length > 3 && n.includes(reqTargetName)) || (n.length > 3 && reqTargetName.includes(n));
+    });
+  }
+  if (!matchedTargetItem && itemsToRender.length > 0) {
+    matchedTargetItem = itemsToRender[0];
+  }
+  if (matchedTargetItem) {
+    itemsToRender = [matchedTargetItem];
   }
   if (filterSellerId) {
     itemsToRender = itemsToRender.filter(
@@ -2279,7 +2315,7 @@ export const generateExchangeInvoicePDF = (order, filterSellerId = null) => {
     );
   }
   if (itemsToRender.length === 0 && Array.isArray(order.items)) {
-    itemsToRender = [...order.items];
+    itemsToRender = [matchedTargetItem || order.items[0]];
   }
 
   const targetItemForExchange = itemsToRender[0] || {};
@@ -2351,18 +2387,8 @@ export const generateExchangeInvoicePDF = (order, filterSellerId = null) => {
 
   let y = tableTop + 24;
 
-  const targetItemId = order.returnRequest?.itemId;
-  let exchItems = Array.isArray(order.items) ? [...order.items] : [];
-  if (targetItemId) {
-    const matched = exchItems.filter(it => String(it._id || it.id || it.productId) === String(targetItemId));
-    if (matched.length > 0) exchItems = matched;
-  } else if (order.returnRequest?.itemName) {
-    const matched = exchItems.filter(it => it.name === order.returnRequest.itemName);
-    if (matched.length > 0) exchItems = matched;
-  }
-  if (exchItems.length === 0 && order.items?.length > 0) {
-    exchItems = [order.items[0]];
-  }
+  // In replacement tax invoice, strictly render ONLY the new item given in exchange
+  let exchItems = [targetItemForExchange];
 
   const priceDiff = Number(order.returnRequest?.priceDifference || 0);
   const adjType = order.returnRequest?.priceAdjustmentType || "none";
