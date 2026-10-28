@@ -8,6 +8,7 @@ import { downloadInvoice } from "../controllers/orderController.js";
 import { broadcastRealtimeEvent } from "../services/realtimeService.js";
 import Seller from "../models/Seller.js";
 import { sendFast2SmsBulkSchoolInquiryLive } from "../services/smsService.js";
+import { resolveCityCoordinates } from "../utils/geoCoordinates.js";
 
 const router = express.Router();
 
@@ -111,8 +112,24 @@ router.post("/", async (req, res) => {
     const shortName = schoolData.shortName || schoolData.code || schoolData.name.split(" ").map(w => w[0]).join("").slice(0, 8).toUpperCase();
     const code = schoolData.code || shortName;
     const schoolId = schoolData.schoolId || `SCH-${Date.now().toString().slice(-6)}-${Math.floor(Math.random() * 900 + 100)}`;
+
+    let lat = schoolData.lat !== undefined && schoolData.lat !== null && schoolData.lat !== "" ? Number(schoolData.lat) : undefined;
+    let lng = schoolData.lng !== undefined && schoolData.lng !== null && schoolData.lng !== "" ? Number(schoolData.lng) : undefined;
+
+    const isDelhiCoords = (Math.abs(Number(lat) - 28.6139) < 0.001 && Math.abs(Number(lng) - 77.2090) < 0.001);
+    const isDelhiCity = String(schoolData.city || "").toLowerCase().includes("delhi");
+    if ((!lat || !lng || (isDelhiCoords && !isDelhiCity)) && (schoolData.city || schoolData.name)) {
+      const resolved = resolveCityCoordinates(schoolData.city) || resolveCityCoordinates(schoolData.name);
+      if (resolved) {
+        lat = resolved.lat;
+        lng = resolved.lng;
+      }
+    }
+
     const school = new School({
       ...schoolData,
+      ...(lat !== undefined ? { lat } : {}),
+      ...(lng !== undefined ? { lng } : {}),
       shortName,
       code,
       schoolId,
@@ -129,7 +146,21 @@ router.post("/", async (req, res) => {
 // PUT update a school
 router.put("/:id", async (req, res) => {
   try {
-    const school = await School.findByIdAndUpdate(req.params.id, req.body, { new: true });
+    const updateData = { ...req.body };
+    let lat = updateData.lat !== undefined && updateData.lat !== null && updateData.lat !== "" ? Number(updateData.lat) : undefined;
+    let lng = updateData.lng !== undefined && updateData.lng !== null && updateData.lng !== "" ? Number(updateData.lng) : undefined;
+
+    const isDelhiCoords = (Math.abs(Number(lat) - 28.6139) < 0.001 && Math.abs(Number(lng) - 77.2090) < 0.001);
+    const isDelhiCity = String(updateData.city || "").toLowerCase().includes("delhi");
+    if ((isDelhiCoords && !isDelhiCity) && (updateData.city || updateData.name)) {
+      const resolved = resolveCityCoordinates(updateData.city) || resolveCityCoordinates(updateData.name);
+      if (resolved) {
+        updateData.lat = resolved.lat;
+        updateData.lng = resolved.lng;
+      }
+    }
+
+    const school = await School.findByIdAndUpdate(req.params.id, updateData, { new: true });
     if (!school) {
       return res.status(404).json({ success: false, message: "School not found" });
     }
