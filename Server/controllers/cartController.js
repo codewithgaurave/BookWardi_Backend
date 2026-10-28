@@ -17,6 +17,34 @@ const extractCartItemId = (item) => {
   return String(item);
 };
 
+// Helper to resolve available stock for a product, taking size variants into account
+export const resolveProductStock = (prod, itemSize = "") => {
+  if (!prod) return Infinity;
+  const targetSize = String(itemSize || "").trim().toLowerCase();
+
+  // 1. If size is specified and product has sizeVariants
+  if (targetSize && Array.isArray(prod.sizeVariants) && prod.sizeVariants.length > 0) {
+    const variant = prod.sizeVariants.find((v) => {
+      const s = String(v.size || v.measureValue || v.name || "").trim().toLowerCase();
+      return s === targetSize;
+    });
+    if (variant) {
+      const vStock = variant.stockQuantity !== undefined ? variant.stockQuantity : variant.stock;
+      if (vStock !== undefined && vStock !== null && !isNaN(Number(vStock))) {
+        return Math.max(0, Number(vStock));
+      }
+    }
+  }
+
+  // 2. Check top-level product stock
+  const pStock = prod.stockQuantity !== undefined ? prod.stockQuantity : prod.stock;
+  if (pStock !== undefined && pStock !== null && !isNaN(Number(pStock))) {
+    return Math.max(0, Number(pStock));
+  }
+
+  return Infinity;
+};
+
 // Helper to locate existing cart for user without creating a dummy empty document
 const findUserCart = async (userId, userPhone) => {
   const query = [];
@@ -115,6 +143,9 @@ const getNormalizedCartItems = (cart) => {
         minMeter: it.minMeter !== undefined ? Number(it.minMeter) : undefined,
         meterStep: it.meterStep !== undefined ? Number(it.meterStep) : undefined,
         unit: it.unit || undefined,
+        stock: it.stock !== undefined ? Number(it.stock) : (it.stockQuantity !== undefined ? Number(it.stockQuantity) : undefined),
+        stockQuantity: it.stockQuantity !== undefined ? Number(it.stockQuantity) : (it.stock !== undefined ? Number(it.stock) : undefined),
+        sizeVariants: Array.isArray(it.sizeVariants) ? it.sizeVariants : undefined,
         quantity: Number(it.quantity) > 0 ? Number(it.quantity) : 1
       };
     })
@@ -206,6 +237,15 @@ export const getCart = async (req, res) => {
           if (liveProd.price !== undefined) {
             item.price = Number(liveProd.price);
           }
+          const availStock = resolveProductStock(liveProd, item.selectedSize || item.variantName || item.size);
+          item.stock = availStock;
+          item.stockQuantity = availStock;
+          if (Array.isArray(liveProd.sizeVariants)) {
+            item.sizeVariants = liveProd.sizeVariants;
+          }
+          if (availStock !== Infinity && item.quantity > availStock) {
+            item.quantity = Math.max(1, availStock);
+          }
         }
       }
     }
@@ -234,6 +274,20 @@ export const addToCart = async (req, res) => {
       return res.status(400).json({ message: "Product details or ID required" });
     }
 
+    let liveProd = null;
+    if (/^[0-9a-fA-F]{24}$/.test(String(itemNumId))) {
+      liveProd = await Product.findById(itemNumId).catch(() => null);
+    }
+    if (!liveProd && itemProduct.name) {
+      liveProd = await Product.findOne({ name: itemProduct.name }).catch(() => null);
+    }
+    const availStock = resolveProductStock(liveProd, itemProduct.selectedSize || itemProduct.variantName);
+    if (availStock !== Infinity && availStock <= 0) {
+      return res.status(400).json({
+        message: `"${itemProduct.name || 'This item'}" is currently out of stock.`
+      });
+    }
+
     let cart = await getOrCreateCart(userId, userPhone);
     const cartItemId = itemProduct.cartItemId || extractCartItemId({ ...itemProduct, id: itemNumId });
 
@@ -254,7 +308,17 @@ export const addToCart = async (req, res) => {
       : (Number(quantity) > 0 ? Number(quantity) : 1);
 
     if (existingIndex > -1) {
-      items[existingIndex].quantity += qtyToAdd;
+      const existingQty = Number(items[existingIndex].quantity) || 0;
+      if (availStock !== Infinity && (existingQty + qtyToAdd) > availStock) {
+        if (existingQty >= availStock) {
+          return res.status(400).json({
+            message: `Only ${availStock} units in stock. You already have the maximum available quantity in your cart.`
+          });
+        }
+        items[existingIndex].quantity = availStock;
+      } else {
+        items[existingIndex].quantity += qtyToAdd;
+      }
       if (itemProduct.name) items[existingIndex].name = itemProduct.name;
       if (itemProduct.image) items[existingIndex].image = itemProduct.image || (Array.isArray(itemProduct.images) && itemProduct.images[0]) || "";
       if (itemProduct.price) items[existingIndex].price = Number(itemProduct.price) || 0;
@@ -321,8 +385,24 @@ export const updateCartItem = async (req, res) => {
       return res.status(404).json({ message: "Item not found in cart" });
     }
 
+    const targetItem = items[itemIndex];
+    let liveProd = null;
+    const pId = targetItem.productId || targetItem.id;
+    if (/^[0-9a-fA-F]{24}$/.test(String(pId))) {
+      liveProd = await Product.findById(pId).catch(() => null);
+    }
+    if (!liveProd && targetItem.name) {
+      liveProd = await Product.findOne({ name: targetItem.name }).catch(() => null);
+    }
+    const availStock = resolveProductStock(liveProd, targetItem.selectedSize || targetItem.variantName);
+
     if (delta !== undefined) {
       const newQty = items[itemIndex].quantity + Number(delta);
+      if (delta > 0 && availStock !== Infinity && newQty > availStock) {
+        return res.status(400).json({
+          message: `Only ${availStock} units available in stock. Cannot add more.`
+        });
+      }
       if (newQty > 0) {
         items[itemIndex].quantity = newQty;
       } else {
@@ -330,6 +410,11 @@ export const updateCartItem = async (req, res) => {
       }
     } else if (quantity !== undefined) {
       const newQty = Number(quantity);
+      if (availStock !== Infinity && newQty > availStock) {
+        return res.status(400).json({
+          message: `Only ${availStock} units available in stock. Cannot add more.`
+        });
+      }
       if (newQty > 0) {
         items[itemIndex].quantity = newQty;
       } else {

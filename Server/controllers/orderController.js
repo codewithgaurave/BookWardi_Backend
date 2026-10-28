@@ -1414,12 +1414,12 @@ export const createOrder = async (req, res) => {
 
       // Check stock availability & prevent overselling beyond actual inventory
       let availableStock = Infinity;
-      const itemSize = String(item.size || item.selectedSize || "").trim();
+      const itemSize = String(item.size || item.selectedSize || item.variantName || "").trim();
 
       if (prod) {
         if (itemSize && Array.isArray(prod.sizeVariants) && prod.sizeVariants.length > 0) {
           const variant = prod.sizeVariants.find(
-            (v) => String(v.size || v.measureValue || "").trim().toLowerCase() === itemSize.toLowerCase()
+            (v) => String(v.size || v.measureValue || v.name || "").trim().toLowerCase() === itemSize.toLowerCase()
           );
           if (variant) {
             const vStock = variant.stockQuantity !== undefined ? variant.stockQuantity : variant.stock;
