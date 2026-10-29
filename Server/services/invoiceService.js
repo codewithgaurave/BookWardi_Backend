@@ -1299,7 +1299,7 @@ export const generateTaxInvoicePDF = (order, filterSellerId = null, options = {}
     firstItemToRender?.sellerStoreName,
     firstItemToRender?.storeName
   ].filter(Boolean).map(s => String(s).toLowerCase().replace(/[^a-z0-9]/g, ""));
-  const isNationalStore = candidateStores.some(s => s.includes("nationalschooldress") || s.includes("pustakbhandar") || s.includes("nationalschool"));
+  const isNationalStore = candidateStores.some(s => s.includes("nationalschooldress") || s.includes("pustakbhandar") || s.includes("nationalschool") || s.includes("national"));
 
   const candidatePhones = [
     resolvedSeller?.phone,
@@ -1366,17 +1366,25 @@ export const generateTaxInvoicePDF = (order, filterSellerId = null, options = {}
 
   const statutoryDeductions = (isSettlementReversed || isExemptedSeller) ? 0 : Math.round((marketplaceCommission + gstOnCommission + tdsAmount + gstTcsAmount) * 100) / 100;
   const totalDeductions = (isSettlementReversed || isExemptedSeller) ? 0 : Math.round((statutoryDeductions + totalDeliveryDeduction) * 100) / 100;
+
+  // In Self Delivery, customer pays delivery fee directly to seller, retained 100% by seller
+  const selfDeliveryFee = isSelf ? customerShippingPaid : 0;
+  const sellerCashCollected = isRule3CodSelf ? Math.round((settlementGross + selfDeliveryFee) * 100) / 100 : settlementGross;
+  const netSellerRetention = isExemptedSeller
+    ? sellerCashCollected
+    : Math.max(0, Math.round((sellerCashCollected - totalDeductions) * 100) / 100);
+
   const sellerSettlement = isSettlementReversed
     ? 0
     : (isExemptedSeller
-      ? settlementGross
+      ? (isRule3CodSelf ? sellerCashCollected : settlementGross)
       : (isRule3CodSelf
         ? -totalDeductions
         : Math.max(0, Math.round((settlementGross - totalDeductions) * 100) / 100)));
 
   const cardY = y + 4;
   const hasCodFee = isCod && Number(order.codFee ?? order.codCharges ?? 0) > 0;
-  const cardHeight = hasCodFee ? 128 : 118;
+  const cardHeight = (hasCodFee || (isSelf && customerShippingPaid > 0)) ? 138 : 124;
   const cardWidth = 252;
 
   // Left Card: Depending on viewer (Seller/Admin vs Customer)
@@ -1396,7 +1404,7 @@ export const generateTaxInvoicePDF = (order, filterSellerId = null, options = {}
     doc
       .text(isSettlementReversed ? "Original Gross Sale:" : (isRule3CodSelf ? "Cash Collected by Seller:" : (isRule4CodCourier ? "Cash via Courier Remittance:" : "Gross Sale (Net Product):")), 48, cY)
       .font("Helvetica-Bold")
-      .text(`Rs. ${settlementGross.toFixed(2)}${isSettlementReversed ? " (Reversed)" : ""}`, 200, cY, { width: 85, align: "right" });
+      .text(`Rs. ${(isRule3CodSelf ? sellerCashCollected : settlementGross).toFixed(2)}${isSettlementReversed ? " (Reversed)" : ""}`, 200, cY, { width: 85, align: "right" });
     cY += 11;
 
     doc
@@ -1424,6 +1432,11 @@ export const generateTaxInvoicePDF = (order, filterSellerId = null, options = {}
       doc
         .text("Delivery Charges (Policy):", 48, cY)
         .text(isSettlementReversed ? "Rs. 0.00 (Waived)" : (totalDeliveryDeduction > 0 ? `-Rs. ${totalDeliveryDeduction.toFixed(2)}` : (delivBorneBy === 'customer' ? "Rs. 0.00 (Cust. Paid)" : `FREE (>=Rs. ${freeDeliveryThreshold})`)), 200, cY, { width: 85, align: "right" });
+      cY += 11;
+    } else if (isSelf && customerShippingPaid > 0) {
+      doc
+        .text("Delivery Charges (Policy):", 48, cY)
+        .text(`+Rs. ${customerShippingPaid.toFixed(2)} (Self Delivery)`, 200, cY, { width: 85, align: "right" });
       cY += 11;
     }
 
@@ -1464,8 +1477,15 @@ export const generateTaxInvoicePDF = (order, filterSellerId = null, options = {}
         .fontSize(7.5)
         .font("Helvetica-Bold")
         .fillColor(isExemptedSeller ? "#065f46" : "#b91c1c")
-        .text(isExemptedSeller ? "Portal Cut (Exempt):" : "Settlement (Owed to Portal):", 48, cY)
-        .text(isExemptedSeller ? "Rs. 0.00 (Exempt)" : `-Rs. ${Math.abs(sellerSettlement).toFixed(2)}`, 200, cY, { width: 85, align: "right" });
+        .text(isExemptedSeller ? "Payable to Portal (Exempt):" : "Settlement (Owed to Portal):", 48, cY)
+        .text(isExemptedSeller ? "Rs. 0.00 (Exempt)" : (totalDeductions > 0 ? `-Rs. ${totalDeductions.toFixed(2)}` : "Rs. 0.00"), 200, cY, { width: 85, align: "right" });
+      cY += 11;
+      doc
+        .fontSize(7.5)
+        .font("Helvetica-Bold")
+        .fillColor("#065f46")
+        .text("Net Seller Retention:", 48, cY)
+        .text(`Rs. ${netSellerRetention.toFixed(2)}`, 200, cY, { width: 85, align: "right" });
     } else {
       doc
         .fontSize(7.5)
