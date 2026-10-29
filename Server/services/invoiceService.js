@@ -1,6 +1,13 @@
 import PDFDocument from "pdfkit";
+import fs from "fs";
+import path from "path";
+import { fileURLToPath } from "url";
 import { isGstExempted } from "./settlementService.js";
 import { getSellerInvoicePrefix, formatSellerInvoiceNumber, formatSellerCreditNoteNumber, getSellerCreditNoteNumber } from "../utils/invoiceHelper.js";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const backendLogoPath = path.resolve(__dirname, "../../public/logo.png");
 
 export const isGenericSellerPlaceholder = (val) => {
   if (!val || typeof val !== 'string') return true;
@@ -509,16 +516,26 @@ export const generateTaxInvoicePDF = (order, filterSellerId = null, options = {}
   const compGstin = options.companyGstin || options.platformSetting?.companyGstin || order.platformSettings?.companyGstin || "09AAACB1234F1Z9";
 
   // 1. HEADER SECTION (Brand & Invoice Title)
+  let headerTextX = 40;
+  if (fs.existsSync(backendLogoPath)) {
+    try {
+      doc.image(backendLogoPath, 40, 36, { fit: [52, 52] });
+      headerTextX = 100;
+    } catch (e) {
+      // Fallback
+    }
+  }
+
   doc
     .fillColor(accentColor)
-    .fontSize(22)
+    .fontSize(20)
     .font("Helvetica-Bold")
-    .text(compName, 40, 40)
-    .fontSize(9)
+    .text(compName, headerTextX, 40)
+    .fontSize(8.5)
     .font("Helvetica")
     .fillColor(mutedColor)
-    .text("India's Premier School & Education Marketplace", 40, 68)
-    .text(`${compAddr} | GSTIN: ${compGstin}`, 40, 80);
+    .text("India's Premier School & Education Marketplace", headerTextX, 64)
+    .text(`${compAddr} | GSTIN: ${compGstin}`, headerTextX, 76);
 
   // 2. SOLD BY (SELLER) & BILL TO / SHIP TO SECTION
   const resolvedSeller = resolveInvoiceSellerDetails(order, filterSellerId);
@@ -1658,16 +1675,26 @@ export const generateCreditNotePDF = (order, filterSellerId = null, options = {}
   const compGstinCN = options.companyGstin || options.platformSetting?.companyGstin || order.platformSettings?.companyGstin || "09AAACB1234F1Z9";
 
   // 1. HEADER SECTION (Brand & Credit Note Title)
+  let headerTextXCN = 40;
+  if (fs.existsSync(backendLogoPath)) {
+    try {
+      doc.image(backendLogoPath, 40, 42, { fit: [48, 48] });
+      headerTextXCN = 96;
+    } catch (e) {
+      // Fallback
+    }
+  }
+
   doc
     .fillColor(roseColor)
-    .fontSize(20)
+    .fontSize(19)
     .font("Helvetica-Bold")
-    .text(compNameCN, 40, 46)
+    .text(compNameCN, headerTextXCN, 46)
     .fontSize(8)
     .font("Helvetica")
     .fillColor(mutedColor)
-    .text("India's Premier School & Education Marketplace", 40, 70)
-    .text(`${compAddrCN} | GSTIN: ${compGstinCN}`, 40, 81);
+    .text("India's Premier School & Education Marketplace", headerTextXCN, 68)
+    .text(`${compAddrCN} | GSTIN: ${compGstinCN}`, headerTextXCN, 79);
 
   doc
     .fillColor(roseColor)
@@ -2184,16 +2211,26 @@ export const generateExchangeInvoicePDF = (order, filterSellerId = null, options
   const compGstinEx = options.companyGstin || options.platformSetting?.companyGstin || order.platformSettings?.companyGstin || "09AAACB1234F1Z9";
 
   // 1. HEADER SECTION (Brand & Tax Invoice Title)
+  let headerTextXEx = 40;
+  if (fs.existsSync(backendLogoPath)) {
+    try {
+      doc.image(backendLogoPath, 40, 42, { fit: [48, 48] });
+      headerTextXEx = 96;
+    } catch (e) {
+      // Fallback
+    }
+  }
+
   doc
     .fillColor(darkTeal)
-    .fontSize(20)
+    .fontSize(19)
     .font("Helvetica-Bold")
-    .text(compNameEx, 40, 46)
+    .text(compNameEx, headerTextXEx, 46)
     .fontSize(8)
     .font("Helvetica")
     .fillColor(mutedColor)
-    .text("India's Premier School & Education Marketplace", 40, 70)
-    .text(`${compAddrEx} | GSTIN: ${compGstinEx}`, 40, 81);
+    .text("India's Premier School & Education Marketplace", headerTextXEx, 68)
+    .text(`${compAddrEx} | GSTIN: ${compGstinEx}`, headerTextXEx, 79);
 
   doc
     .fillColor(primaryColor)
@@ -2641,17 +2678,27 @@ export const generateSellerFinancialStatementPDF = (seller, orders = [], metrics
   const settledVolume = Number(metrics.settledVolume ?? seller.totalWithdrawn ?? 0);
 
   // 1. HEADER SECTION
+  let headerTextXFS = 40;
+  if (fs.existsSync(backendLogoPath)) {
+    try {
+      doc.image(backendLogoPath, 40, 36, { fit: [52, 52] });
+      headerTextXFS = 100;
+    } catch (e) {
+      // Fallback
+    }
+  }
+
   doc
     .fillColor(tealColor)
-    .fontSize(22)
+    .fontSize(20)
     .font("Helvetica-Bold")
-    .text("BookVardi", 40, 40)
-    .fontSize(9)
+    .text("BookVardi", headerTextXFS, 40)
+    .fontSize(8.5)
     .font("Helvetica")
     .fillColor(mutedColor)
-    .text("India's Premier School & Education Marketplace", 40, 68)
-    .text("BookVardi | GSTIN: 09AAACB1234F1Z9", 40, 80)
-    .text("Support: finance@bookvardi.in | Helpline: +91 94500 00000", 40, 92);
+    .text("India's Premier School & Education Marketplace", headerTextXFS, 64)
+    .text("BookVardi | GSTIN: 09AAACB1234F1Z9", headerTextXFS, 76)
+    .text("Support: finance@bookvardi.in | Helpline: +91 94500 00000", headerTextXFS, 88);
 
   doc
     .fillColor(primaryColor)
