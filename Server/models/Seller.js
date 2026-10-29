@@ -134,7 +134,7 @@ const sellerSchema = new mongoose.Schema(
       ifscCode: { type: String, default: "" },
       bankName: { type: String, default: "" },
       branchName: { type: String, default: "" },
-      accountType: { type: String, default: "Savings Account" }
+      accountType: { type: String, default: "Current Account" }
     },
 
     // Store Branding & Profile

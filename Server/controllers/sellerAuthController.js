@@ -217,7 +217,7 @@ export const registerSeller = async (req, res) => {
         ifscCode: ifscCode || existingSeller.bankDetails?.ifscCode || "",
         bankName: bankName || existingSeller.bankDetails?.bankName || "",
         branchName: branchName || existingSeller.bankDetails?.branchName || "",
-        accountType: req.body.accountType || existingSeller.bankDetails?.accountType || "Savings Account"
+        accountType: req.body.accountType || existingSeller.bankDetails?.accountType || "Current Account"
       };
       existingSeller.documents = {
         ...existingSeller.documents,
@@ -328,7 +328,7 @@ export const registerSeller = async (req, res) => {
         ifscCode: ifscCode || "",
         bankName: bankName || "",
         branchName: branchName || "",
-        accountType: req.body.accountType || "Savings Account"
+        accountType: req.body.accountType || "Current Account"
       },
       documents: {
         aadhaarNumber: aadhaarNumber || "",
@@ -666,7 +666,7 @@ export const updateSellerProfile = async (req, res) => {
         ifscCode: bankDetails?.ifscCode || bankDetails?.bankIfscCode || bankIfscCode || seller.bankDetails?.ifscCode || "",
         bankName: bankDetails?.bankName || bankName || seller.bankDetails?.bankName || "",
         branchName: bankDetails?.branchName || bankDetails?.bankBranch || bankBranch || branchName || seller.bankDetails?.branchName || "",
-        accountType: bankDetails?.accountType || req.body.accountType || seller.bankDetails?.accountType || "Savings Account"
+        accountType: bankDetails?.accountType || req.body.accountType || seller.bankDetails?.accountType || "Current Account"
       };
 
       const oldAcct = String(seller.bankDetails?.accountNumber || "").trim();
@@ -1408,7 +1408,7 @@ export const updateSellerApplication = async (req, res) => {
         ifscCode: bankIfscCode || req.body.ifscCode || existingSeller.bankDetails?.ifscCode || "",
         bankName: bankName || req.body.bankName || existingSeller.bankDetails?.bankName || "",
         branchName: branchName || bankBranch || req.body.branchName || req.body.bankBranch || existingSeller.bankDetails?.branchName || "",
-        accountType: req.body.accountType || existingSeller.bankDetails?.accountType || "Savings Account"
+        accountType: req.body.accountType || existingSeller.bankDetails?.accountType || "Current Account"
       };
     }
 
