@@ -1752,8 +1752,21 @@ export const createOrder = async (req, res) => {
     } else if (shippingFee !== undefined && shippingFee !== null && !isNaN(Number(shippingFee))) {
       totalShipping = Number(shippingFee);
     } else {
-      const distinctCount = orderItems.length;
-      totalShipping = distinctCount * universalShippingFee;
+      // Delivery charges are per distinct seller, NEVER multiplied per item for the same seller!
+      const uniqueSellersSet = new Set(
+        orderItems.map(item => {
+          return String(
+            item.sellerId?._id ||
+            item.sellerId ||
+            item.sellerDetails?.sellerId ||
+            item.sellerDetails?._id ||
+            item.storeName ||
+            item.sellerName ||
+            "default_seller"
+          ).trim();
+        })
+      );
+      totalShipping = Math.max(1, uniqueSellersSet.size) * universalShippingFee;
     }
 
     // Group items by unique seller to support individual multi-vendor sub-orders
@@ -1890,15 +1903,6 @@ export const createOrder = async (req, res) => {
           }
           return sum;
         }, 0);
-
-    const isCod = /cod|cash\s*on\s*delivery/i.test(String(paymentMethod || ''));
-    const orderCodFee = isCod
-      ? (req.body.codFee !== undefined && req.body.codFee !== null && !isNaN(Number(req.body.codFee))
-          ? Number(req.body.codFee)
-          : (req.body.appliedCodFee !== undefined && req.body.appliedCodFee !== null && !isNaN(Number(req.body.appliedCodFee))
-              ? Number(req.body.appliedCodFee)
-              : universalCodFee))
-      : 0;
 
     const finalTotalAmount = Number(calculatedTotal) > 0
       ? Number(calculatedTotal)
