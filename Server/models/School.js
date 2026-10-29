@@ -22,6 +22,7 @@ const schoolSchema = new mongoose.Schema(
     contactPerson: { type: String },
     email: { type: String },
     phone: { type: String },
+    commissionShare: { type: String, default: "0%" },
     status: { type: String, default: "Partner Active" },
     exclusiveKit: { type: Boolean, default: true }
   },
