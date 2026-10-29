@@ -1282,7 +1282,8 @@ export const generateTaxInvoicePDF = (order, filterSellerId = null, options = {}
         : Math.max(0, Math.round((settlementGross - totalDeductions) * 100) / 100)));
 
   const cardY = y + 4;
-  const cardHeight = 115;
+  const hasCodFee = isCod && Number(order.codFee ?? order.codCharges ?? 0) > 0;
+  const cardHeight = hasCodFee ? 128 : 118;
   const cardWidth = 252;
 
   // Left Card: Depending on viewer (Seller/Admin vs Customer)
@@ -1331,6 +1332,28 @@ export const generateTaxInvoicePDF = (order, filterSellerId = null, options = {}
         .text("Delivery Charges (Policy):", 48, cY)
         .text(isSettlementReversed ? "Rs. 0.00 (Waived)" : (totalDeliveryDeduction > 0 ? `-Rs. ${totalDeliveryDeduction.toFixed(2)}` : (delivBorneBy === 'customer' ? "Rs. 0.00 (Cust. Paid)" : `FREE (>=Rs. ${freeDeliveryThreshold})`)), 200, cY, { width: 85, align: "right" });
       cY += 11;
+    }
+
+    const rawCodFee = Number(order.codFee ?? order.codCharges ?? 0);
+    if (isCod && rawCodFee > 0) {
+      if (isRule3CodSelf) {
+        doc
+          .text("COD Charge (Self Delivery):", 48, cY)
+          .text(`Rs. ${rawCodFee.toFixed(2)} (Retained by Seller)`, 200, cY, { width: 85, align: "right" });
+        cY += 11;
+      } else {
+        if (isExemptedSeller) {
+          doc
+            .text("COD Charge (Courier Delivery):", 48, cY)
+            .text("Rs. 0.00 (09BLMPK2840L2ZN Exempt)", 200, cY, { width: 85, align: "right" });
+          cY += 11;
+        } else {
+          doc
+            .text("COD Charge (Courier Delivery):", 48, cY)
+            .text(`-Rs. ${rawCodFee.toFixed(2)} (Retained by Portal)`, 200, cY, { width: 85, align: "right" });
+          cY += 11;
+        }
+      }
     }
 
     doc.strokeColor("#fde68a").lineWidth(0.5).moveTo(48, cY).lineTo(284, cY).stroke();

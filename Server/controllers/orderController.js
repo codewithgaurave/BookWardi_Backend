@@ -1797,6 +1797,15 @@ export const createOrder = async (req, res) => {
     // Attach dynamic Seller Settlement breakdown (Rules 1, 2, 3 & 4)
     const effectiveOrderTotal = Number(totalAmount || 0) || overallItemsSubtotal;
     const customerState = req.body.shippingAddress?.state || "Uttar Pradesh";
+    const isCod = /cod|cash\s*on\s*delivery/i.test(String(paymentMethod || ''));
+    const orderCodFee = isCod
+      ? (req.body.codFee !== undefined && req.body.codFee !== null && !isNaN(Number(req.body.codFee))
+          ? Number(req.body.codFee)
+          : (req.body.appliedCodFee !== undefined && req.body.appliedCodFee !== null && !isNaN(Number(req.body.appliedCodFee))
+              ? Number(req.body.appliedCodFee)
+              : universalCodFee))
+      : 0;
+
     for (const it of orderItems) {
       const itGross = Number(it.total) || Math.round(((Number(it.finalPrice || it.price || 0)) * (Number(it.quantity) || 1)) * 100) / 100;
       const itGstRate = Number(it.gstPercent ?? it.gstPercentage ?? it.gstRate ?? it.gst ?? (it.category?.toLowerCase()?.includes('book') ? 0 : 5));
@@ -1829,6 +1838,8 @@ export const createOrder = async (req, res) => {
         deliveryCharge: totalShipping > 0 ? (req.body.shippingFee ?? req.body.shippingAmount ?? req.body.shippingCost ?? universalShippingFee ?? 49) : 0,
         shippingFee: totalShipping,
         shippingCost: totalShipping,
+        codFee: orderCodFee,
+        appliedCodFee: orderCodFee,
         freeDeliveryThreshold: dynamicThreshold,
         deliveryChargeBorneBy: (effectiveOrderTotal >= dynamicThreshold ? 'admin' : (totalShipping > 0 ? 'customer' : (req.body.deliveryChargeBorneBy || 'seller')))
       });
@@ -1852,6 +1863,10 @@ export const createOrder = async (req, res) => {
       it.gstOnDeliveryAmount = stl.gstOnDeliveryAmount;
       it.totalDeliveryDeduction = stl.totalDeliveryDeduction;
       it.deliveryChargeBorneBy = stl.deliveryChargeBorneBy;
+      it.codChargeAmount = stl.codChargeAmount;
+      it.codChargeRetainedBy = stl.codChargeRetainedBy;
+      it.codChargeDeduction = stl.codChargeDeduction;
+      it.isCodExempted = stl.isCodExempted;
       it.totalDeductions = stl.totalDeductions;
       it.netSettlementAmount = stl.netSettlement;
       it.settlementStatus = "pending";
@@ -2657,6 +2672,8 @@ export const updateOrder = async (req, res) => {
                 deliveryCharge: Number(existingOrder.shippingFee ?? existingOrder.shippingCost ?? existingOrder.shippingAmount ?? existingOrder.deliveryCharge ?? 49),
                 shippingFee: Number(existingOrder.shippingFee ?? existingOrder.shippingCost ?? existingOrder.shippingAmount ?? 0),
                 shippingCost: Number(existingOrder.shippingFee ?? existingOrder.shippingCost ?? existingOrder.shippingAmount ?? 0),
+                codFee: Number(existingOrder.codFee ?? existingOrder.appliedCodFee ?? existingOrder.codCharges ?? 0),
+                appliedCodFee: Number(existingOrder.appliedCodFee ?? existingOrder.codFee ?? 0),
                 freeDeliveryThreshold: Number(existingOrder.freeDeliveryThreshold ?? 401),
                 deliveryChargeBorneBy: (ordTotal >= Number(existingOrder.freeDeliveryThreshold ?? 401)) 
                   ? 'admin' 
@@ -2685,6 +2702,10 @@ export const updateOrder = async (req, res) => {
               item.gstOnDeliveryAmount = stl.gstOnDeliveryAmount;
               item.totalDeliveryDeduction = stl.totalDeliveryDeduction;
               item.deliveryChargeBorneBy = stl.deliveryChargeBorneBy;
+              item.codChargeAmount = stl.codChargeAmount;
+              item.codChargeRetainedBy = stl.codChargeRetainedBy;
+              item.codChargeDeduction = stl.codChargeDeduction;
+              item.isCodExempted = stl.isCodExempted;
               item.totalDeductions = stl.totalDeductions;
               item.netSettlementAmount = stl.netSettlement;
               item.settlementRule = stl.ruleCode;

@@ -83,7 +83,8 @@ export const SETTLEMENT_RULES = {
     gstOnCommissionRate: 18,    // 18%
     tdsRate: 0.1,              // 0.1%
     gstTcsRate: 0.0,           // 0% (जब पोर्टल ग्राहक का भुगतान एकत्र नहीं करता)
-    isSellerCollectedCash: true
+    isSellerCollectedCash: true,
+    codChargePolicy: "seller"  // COD चार्ज सेलर के पास रहेगा (सेलर स्वयं कलेक्ट व रखेगा)
   },
   COD_THIRD_PARTY_DELIVERY: {
     code: "COD_THIRD_PARTY_DELIVERY",
@@ -95,7 +96,9 @@ export const SETTLEMENT_RULES = {
     tdsRate: 0.1,              // 0.1%
     gstTcsRate: 0.5,           // 0.5% (लागू कानून के अनुसार जब कूरियर पोर्टल को भुगतान करता है)
     freeDeliveryThreshold: 401, // Dynamic: Orders >= threshold (default ₹401) have delivery charges absorbed by Admin
-    isSellerCollectedCash: false // Courier remits collected cash to Portal
+    isSellerCollectedCash: false, // Courier remits collected cash to Portal
+    codChargePolicy: "portal",   // COD चार्ज पोर्टल के पास रहेगा (छूट: 09BLMPK2840L2ZN से कूरियर में भी नहीं कटेगा)
+    exemptGstList: EXEMPTED_GST_NUMBERS
   }
 };
 
@@ -205,6 +208,14 @@ export function calculateSellerSettlement(grossSale, options = {}) {
       gstOnDeliveryRate: 0,
       gstOnDeliveryAmount: 0,
       totalDeliveryDeduction: 0,
+      // COD charges waived on cancellation
+      rawCodFee: 0,
+      codChargeAmount: 0,
+      selfCodFee: 0,
+      codChargeRetainedBy: "none",
+      codChargeDeduction: 0,
+      isCodExempted: false,
+      codExemptionReason: "",
       // Aggregates & Final Payout
       statutoryDeductions: 0,
       totalDeductions: 0,
@@ -383,11 +394,40 @@ export function calculateSellerSettlement(grossSale, options = {}) {
   }
 
   const customerShipping = Number(options.shippingFee ?? options.shippingCost ?? options.shippingAmount ?? 0);
-  // In Self Delivery, customer paid delivery charges to the seller / driver, so Gross Sale includes delivery fee
+  const rawCodFee = Math.max(0, Number(options.codFee ?? options.codCharges ?? options.appliedCodFee ?? 0));
+  const isCodExempted = Boolean(isFullyExempted || isExemptedByGst);
+
+  // In Self Delivery, customer paid delivery charges and COD fee directly to seller / rider at doorstep
   const selfDeliveryFee = isSelfDelivery ? customerShipping : 0;
-  const effectiveGrossSale = (isSelfDelivery && customerShipping > 0 && !options.grossIncludesShipping)
-    ? Math.round((gross + customerShipping) * 100) / 100
+  const selfCodFee = (isCod && isSelfDelivery) ? rawCodFee : 0;
+  const effectiveGrossSale = (isSelfDelivery && (customerShipping > 0 || selfCodFee > 0) && !options.grossIncludesShipping)
+    ? Math.round((gross + customerShipping + selfCodFee) * 100) / 100
     : gross;
+
+  // 6. COD Charges Allocation & Policy:
+  // - Self Delivery: COD charge goes to Seller ("Self delivery me seller ke pass", 0 portal deduction)
+  // - Courier Delivery: COD charge belongs to Portal ("Courier delivery me portal ke pass")
+  // - Exemption: Seller with GSTIN 09BLMPK2840L2ZN is EXEMPT:
+  //   "09BLMPK2840L2ZN को छूट मिलेगी courier delivery me bhi isse Kate nhi jaenge" (Strictly 0 deduction)
+  let codChargeRetainedBy = "none";
+  let codChargeDeduction = 0;
+
+  if (isCod && rawCodFee > 0) {
+    if (isSelfDelivery) {
+      codChargeRetainedBy = "seller";
+      codChargeDeduction = 0; // Seller retains COD charges
+    } else {
+      // Courier Delivery (Third Party)
+      codChargeRetainedBy = "portal";
+      if (isCodExempted) {
+        // Exempted seller: No COD fee deduction ever
+        codChargeDeduction = 0;
+      } else {
+        // Regular sellers in courier delivery: COD charge goes to portal / deducted if applicable
+        codChargeDeduction = rawCodFee;
+      }
+    }
+  }
 
   // Exact calculations rounded to 2 decimal places (paisa accuracy)
   const commissionAmount = Math.round(((gross * commissionRate) / 100) * 100) / 100;
@@ -454,7 +494,7 @@ export function calculateSellerSettlement(grossSale, options = {}) {
   ) / 100;
 
   const totalDeductions = Math.round(
-    (statutoryDeductions + totalDeliveryDeduction) * 100
+    (statutoryDeductions + totalDeliveryDeduction + codChargeDeduction) * 100
   ) / 100;
 
   // Final Settlement Calculation:
@@ -510,6 +550,14 @@ export function calculateSellerSettlement(grossSale, options = {}) {
     gstOnDeliveryRate,
     gstOnDeliveryAmount,
     totalDeliveryDeduction,
+    // COD charges breakdown
+    rawCodFee,
+    codChargeAmount: rawCodFee,
+    selfCodFee,
+    codChargeRetainedBy, // 'seller' in self-delivery, 'portal' in courier delivery
+    codChargeDeduction,  // ₹0 in self-delivery; ₹0 for 09BLMPK2840L2ZN (exempted); rawCodFee for other sellers in courier delivery
+    isCodExempted,
+    codExemptionReason: isCodExempted ? "Special Exemption (GST: 09BLMPK2840L2ZN) - COD charges not deducted in courier delivery" : "",
     // Aggregates
     statutoryDeductions,
     totalDeductions,
@@ -853,6 +901,8 @@ export async function reconcileSellerSettlementBalances(sellerId, options = {}) 
             isThirdParty: order.isThirdParty,
             deliveryChargeBorneBy: order.deliveryChargeBorneBy,
             orderTotal: order.totalAmount || order.total,
+            codFee: order.codFee ?? order.codCharges ?? 0,
+            appliedCodFee: order.appliedCodFee ?? order.codFee ?? 0,
             category: item.category,
             name: item.name
           });
