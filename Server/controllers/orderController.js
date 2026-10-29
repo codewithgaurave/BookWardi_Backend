@@ -24,6 +24,8 @@ import {
   sendFast2SmsRefundInitiated,
   sendFast2SmsReturnApproved,
   sendFast2SmsRefundProcessed,
+  sendFast2SmsExchangeOtp,
+  sendFast2SmsReturnOtp,
   sendOrderStatusSms
 } from "../services/smsService.js";
 import { saveBase64ToFile } from "./sellerAuthController.js";
@@ -2581,7 +2583,7 @@ export const updateOrder = async (req, res) => {
         const custPhone = existingOrder.customer?.phone || existingOrder.shippingAddress?.phone || existingOrder.phone;
         const cleanPhone = String(custPhone || "").replace(/\D/g, "").slice(-10);
         if (cleanPhone && cleanPhone.length === 10) {
-          sendFast2SmsOtp(cleanPhone, activeOtp).catch(() => {});
+          sendFast2SmsExchangeOtp(cleanPhone, existingOrder.orderId, activeOtp).catch(() => {});
         }
       } else if (newStatusKey === "pickup_scheduled") {
         if (existingOrder.returnRequest) existingOrder.returnRequest.status = "pickup_scheduled";
@@ -2607,7 +2609,12 @@ export const updateOrder = async (req, res) => {
         const custPhone = existingOrder.customer?.phone || existingOrder.shippingAddress?.phone || existingOrder.phone;
         const cleanPhone = String(custPhone || "").replace(/\D/g, "").slice(-10);
         if (cleanPhone && cleanPhone.length === 10) {
-          sendFast2SmsOtp(cleanPhone, activeOtp).catch(() => {});
+          const isExchange = existingOrder.returnRequest?.type === 'exchange';
+          if (isExchange) {
+            sendFast2SmsExchangeOtp(cleanPhone, existingOrder.orderId, activeOtp).catch(() => {});
+          } else {
+            sendFast2SmsReturnOtp(cleanPhone, existingOrder.orderId, activeOtp).catch(() => {});
+          }
         }
       } else if (newStatusKey === "return_approved" || newStatusKey === "approved") {
         if (existingOrder.returnRequest) existingOrder.returnRequest.status = "approved";
@@ -4076,7 +4083,10 @@ export const updateReturnExchangeStatus = async (req, res) => {
       const custPhone = order.customer?.phone || order.shippingAddress?.phone || order.phone;
       const cleanPhone = String(custPhone || "").replace(/\D/g, "").slice(-10);
       if (cleanPhone && cleanPhone.length === 10) {
-        sendFast2SmsOtp(cleanPhone, activeOtp)
+        const smsAction = type === 'exchange'
+          ? sendFast2SmsExchangeOtp(cleanPhone, order.orderId, activeOtp)
+          : sendFast2SmsReturnOtp(cleanPhone, order.orderId, activeOtp);
+        smsAction
           .then((smsRes) => {
             if (smsRes?.success) {
               console.log(`📲 [FAST2SMS] ${type === 'exchange' ? 'Exchange' : 'Return'} Pickup OTP sent to +91 ${cleanPhone}`);
@@ -4179,7 +4189,7 @@ export const updateReturnExchangeStatus = async (req, res) => {
       const custPhone = order.customer?.phone || order.shippingAddress?.phone || order.phone;
       const cleanPhone = String(custPhone || "").replace(/\D/g, "").slice(-10);
       if (cleanPhone && cleanPhone.length === 10) {
-        sendFast2SmsOtp(cleanPhone, activeOtp)
+        sendFast2SmsExchangeOtp(cleanPhone, order.orderId, activeOtp)
           .then((smsRes) => {
             if (smsRes?.success) {
               console.log(`📲 [FAST2SMS] Exchange Delivery OTP sent to +91 ${cleanPhone}`);

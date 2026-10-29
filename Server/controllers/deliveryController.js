@@ -3,7 +3,7 @@ import Order from "../models/Order.js";
 import SchoolBulkOrder from "../models/SchoolBulkOrder.js";
 import { broadcastRealtimeEvent } from "../services/realtimeService.js";
 import { calculateSellerSettlement, calculateSettlementMaturity, reconcileSellerSettlementBalances } from "../services/settlementService.js";
-import { sendFast2SmsOtp, sendFast2SmsOrderDelivered } from "../services/smsService.js";
+import { sendFast2SmsOtp, sendFast2SmsOrderDelivered, sendFast2SmsExchangeOtp, sendFast2SmsReturnOtp } from "../services/smsService.js";
 
 // Helper to locate order or bulk requisition by token or ID
 const findOrderByTokenOrId = async (tokenOrId) => {
@@ -464,7 +464,14 @@ export const resendCustomerDeliveryOtp = async (req, res) => {
 
     if (cleanPhone && cleanPhone.length === 10) {
       try {
-        await sendFast2SmsOtp(cleanPhone, freshOtp);
+        const orderIdentifier = order.orderId || order.referenceId || order.id || token;
+        if (isExchangeOrder) {
+          await sendFast2SmsExchangeOtp(cleanPhone, orderIdentifier, freshOtp);
+        } else if (isReturnOrder) {
+          await sendFast2SmsReturnOtp(cleanPhone, orderIdentifier, freshOtp);
+        } else {
+          await sendFast2SmsOtp(cleanPhone, freshOtp);
+        }
         console.log(`📲 [FAST2SMS] ${taskTypeName} sent successfully to +91 ${cleanPhone} for Order #${order.orderId}`);
       } catch (smsErr) {
         console.warn(`⚠️ [FAST2SMS] Failed to send ${taskTypeName}:`, smsErr.message);

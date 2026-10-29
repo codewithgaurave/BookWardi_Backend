@@ -429,6 +429,50 @@ export const sendFast2SmsBulkSchoolInquiryLive = async (phone) => {
 };
 
 /**
+ * 16. Template ID 229605: Exchange Pickup / Handover OTP
+ * "DEAR CUSTOMER , YOUR OTP FOR THE EXCHANGE PICKUP OF ORDER ID {#VAR#} IS {#VAR#} . :- BOOK VARDI -BOOK VARDI -BOOK VARDI"
+ */
+export const sendFast2SmsExchangeOtp = async (phone, orderId, otp) => {
+  const messageId = process.env.FAST2SMS_EXCHANGE_PICKUP_OTP_MESSAGE_ID || "229605";
+  const cleanOrderId = String(orderId || "").trim();
+  const cleanOtp = String(otp || "").trim();
+  if (!cleanOrderId) {
+    return { success: false, message: "Order ID is required" };
+  }
+  if (!cleanOtp) {
+    return { success: false, message: "Exchange OTP is required" };
+  }
+  return dispatchFast2Sms({
+    phone,
+    messageId,
+    variablesValues: `${cleanOrderId}|${cleanOtp}`,
+    label: "Exchange Pickup OTP SMS"
+  });
+};
+
+/**
+ * 17. Template ID 229604: Return Pickup OTP
+ * "DEAR CUSTOMER , YOUR OTP FOR THE RETURN PICKUP OF ORDER ID {#VAR#} IS {#VAR#} . :- BOOK VARDI -BOOK VARDI -BOOK VARDI"
+ */
+export const sendFast2SmsReturnOtp = async (phone, orderId, otp) => {
+  const messageId = process.env.FAST2SMS_RETURN_PICKUP_OTP_MESSAGE_ID || "229604";
+  const cleanOrderId = String(orderId || "").trim();
+  const cleanOtp = String(otp || "").trim();
+  if (!cleanOrderId) {
+    return { success: false, message: "Order ID is required" };
+  }
+  if (!cleanOtp) {
+    return { success: false, message: "Return OTP is required" };
+  }
+  return dispatchFast2Sms({
+    phone,
+    messageId,
+    variablesValues: `${cleanOrderId}|${cleanOtp}`,
+    label: "Return Pickup OTP SMS"
+  });
+};
+
+/**
  * Unified Helper: Automatically dispatch the appropriate DLT SMS based on order status change
  */
 export const sendOrderStatusSms = async (order, newStatus, extraData = {}) => {
@@ -491,6 +535,25 @@ export const sendOrderStatusSms = async (order, newStatus, extraData = {}) => {
       case "canceled":
         return await sendFast2SmsOrderCancelled(cleanPhone, orderId);
 
+      case "pickup_scheduled": {
+        const isExchange = (extraData.type || extraData.requestType || order.returnRequest?.type) === "exchange";
+        const otp = extraData.deliveryOtp || order.deliveryOtp || order.selfDeliveryDetails?.deliveryOtp || "";
+        if (otp) {
+          return isExchange
+            ? await sendFast2SmsExchangeOtp(cleanPhone, orderId, otp)
+            : await sendFast2SmsReturnOtp(cleanPhone, orderId, otp);
+        }
+        return null;
+      }
+
+      case "exchange_dispatched": {
+        const otp = extraData.deliveryOtp || order.deliveryOtp || order.selfDeliveryDetails?.deliveryOtp || "";
+        if (otp) {
+          return await sendFast2SmsExchangeOtp(cleanPhone, orderId, otp);
+        }
+        return null;
+      }
+
       case "return_approved":
       case "exchange_approved":
       case "approved": {
@@ -536,6 +599,8 @@ export default {
   sendFast2SmsRefundInitiated,
   sendFast2SmsReturnApproved,
   sendFast2SmsRefundProcessed,
+  sendFast2SmsExchangeOtp,
+  sendFast2SmsReturnOtp,
   sendFast2SmsBulkSchoolInquiryLive,
   sendFast2SmsBackToSchoolPromo,
   sendFast2SmsSpecialDiscountPromo,
