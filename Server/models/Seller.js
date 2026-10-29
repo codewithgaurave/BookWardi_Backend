@@ -240,6 +240,21 @@ const sellerSchema = new mongoose.Schema(
       type: mongoose.Schema.Types.ObjectId,
       ref: "Admin"
     },
+
+    // Pending Profile / Settings Updates awaiting Admin Review
+    pendingUpdates: {
+      type: mongoose.Schema.Types.Mixed,
+      default: null
+    },
+    pendingUpdatesSubmittedAt: {
+      type: Date,
+      default: null
+    },
+    pendingUpdatesStatus: {
+      type: String,
+      enum: ["none", "pending_review", "approved", "rejected"],
+      default: "none"
+    },
     role: {
       type: String,
       default: "seller"

@@ -58,13 +58,14 @@ export const getAllSellers = async (req, res) => {
       .sort({ createdAt: -1 })
       .lean();
 
-    const [sellers, total, pending, approved, rejected, suspended] = await Promise.all([
+    const [sellers, total, pending, approved, rejected, suspended, updatesPending] = await Promise.all([
       sellersPromise,
       Seller.countDocuments(),
       Seller.countDocuments({ status: "pending" }),
       Seller.countDocuments({ status: "approved" }),
       Seller.countDocuments({ status: "rejected" }),
-      Seller.countDocuments({ status: "suspended" })
+      Seller.countDocuments({ status: "suspended" }),
+      Seller.countDocuments({ pendingUpdates: { $ne: null } })
     ]);
 
     const counts = {
@@ -72,7 +73,8 @@ export const getAllSellers = async (req, res) => {
       pending,
       approved,
       rejected,
-      suspended
+      suspended,
+      updatesPending
     };
 
     res.json({
@@ -582,6 +584,101 @@ export const downloadSellerFinancialStatement = async (req, res) => {
   } catch (error) {
     console.error("Error generating seller financial statement PDF:", error);
     res.status(500).json({ message: "Failed to generate financial statement PDF", error: error.message });
+  }
+};
+
+// Approve Seller Profile Updates (submitted via Seller Portal Settings)
+export const approveSellerUpdates = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const seller = await findSellerByIdOrQuery(id);
+    if (!seller) {
+      return res.status(404).json({ message: "Seller not found" });
+    }
+
+    if (!seller.pendingUpdates) {
+      return res.status(400).json({ message: "No pending update requests found for this seller." });
+    }
+
+    const updates = seller.pendingUpdates;
+
+    // Apply pending updates to active seller profile
+    if (updates.storeName) seller.storeName = updates.storeName;
+    if (updates.phone) seller.phone = updates.phone;
+    if (updates.email) seller.email = updates.email;
+    if (updates.gstin !== undefined) seller.gstNumber = updates.gstin;
+    if (updates.warehouseAddress || updates.address) seller.address = updates.warehouseAddress || updates.address;
+    if (updates.city) seller.city = updates.city;
+    if (updates.pincode) seller.pincode = updates.pincode;
+
+    if (updates.storeTagline) {
+      if (!seller.storeDetails) seller.storeDetails = {};
+      seller.storeDetails.storeTagline = updates.storeTagline;
+    }
+    if (updates.sellerLegalName) {
+      if (!seller.ownerDetails) seller.ownerDetails = {};
+      seller.ownerDetails.ownerFullName = updates.sellerLegalName;
+    }
+    if (updates.deliveryPreferences) {
+      seller.deliveryPreferences = { ...seller.deliveryPreferences, ...updates.deliveryPreferences };
+    }
+
+    seller.pendingUpdates = null;
+    seller.pendingUpdatesStatus = "approved";
+    seller.pendingUpdatesSubmittedAt = null;
+
+    await seller.save();
+
+    // Also update corresponding User document in DB if exists
+    const userConditions = [{ _id: seller._id }];
+    if (seller.email) userConditions.push({ email: seller.email.toLowerCase().trim() });
+    if (seller.phone) {
+      const cleanPhone = String(seller.phone).replace(/\D/g, "").slice(-10);
+      if (cleanPhone) userConditions.push({ phone: { $regex: cleanPhone + "$" } });
+    }
+
+    if (userConditions.length > 0) {
+      await User.updateMany(
+        { $or: userConditions },
+        { $set: { name: seller.name || updates.storeName, phone: seller.phone, email: seller.email } }
+      ).catch(() => {});
+    }
+
+    res.json({
+      success: true,
+      message: `Profile updates for '${seller.storeName}' have been APPROVED and applied successfully.`,
+      seller
+    });
+  } catch (error) {
+    console.error("approveSellerUpdates error:", error);
+    res.status(500).json({ message: "Failed to approve seller updates", error: error.message });
+  }
+};
+
+// Reject Seller Profile Updates
+export const rejectSellerUpdates = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { reason } = req.body || {};
+    const seller = await findSellerByIdOrQuery(id);
+    if (!seller) {
+      return res.status(404).json({ message: "Seller not found" });
+    }
+
+    seller.pendingUpdates = null;
+    seller.pendingUpdatesStatus = "rejected";
+    seller.pendingUpdatesSubmittedAt = null;
+
+    await seller.save();
+
+    res.json({
+      success: true,
+      message: `Profile update request for '${seller.storeName}' has been REJECTED.`,
+      seller
+    });
+  } catch (error) {
+    console.error("rejectSellerUpdates error:", error);
+    res.status(500).json({ message: "Failed to reject seller updates", error: error.message });
   }
 };
 

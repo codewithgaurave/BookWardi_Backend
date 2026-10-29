@@ -893,23 +893,100 @@ export const getSellerSettings = async (req, res) => {
 // Update Seller Store Operations Settings
 export const updateSellerSettings = async (req, res) => {
   try {
-    const { storeName, email, phone, gstin, address, city, pincode, deliveryPreferences, storeDetails } = req.body;
-    const updates = {};
+    const seller = await Seller.findById(req.user.id);
+    if (!seller) {
+      return res.status(404).json({ message: "Seller not found" });
+    }
 
-    if (storeName) updates.storeName = storeName;
-    if (phone) updates.phone = phone;
-    if (gstin) updates.gstNumber = gstin;
-    if (address) updates.address = address;
-    if (city) updates.city = city;
-    if (pincode) updates.pincode = pincode;
-    if (deliveryPreferences) updates.deliveryPreferences = deliveryPreferences;
-    if (storeDetails) updates.storeDetails = storeDetails;
+    const {
+      storeName,
+      storeTagline,
+      sellerLegalName,
+      gstin,
+      email,
+      phone,
+      warehouseAddress,
+      address,
+      city,
+      pincode,
+      pickupContact,
+      deliveryPreferences,
+      storeDetails,
+      autoAcceptOrders,
+      emailNotifications,
+      smsNotifications
+    } = req.body;
 
-    const updatedSeller = await Seller.findByIdAndUpdate(req.user.id, updates, { new: true }).select("-password");
+    const requestedUpdates = {
+      storeName: storeName !== undefined ? storeName : (seller.storeName || ""),
+      storeTagline: storeTagline !== undefined ? storeTagline : (seller.storeDetails?.storeTagline || ""),
+      sellerLegalName: sellerLegalName !== undefined ? sellerLegalName : (seller.ownerDetails?.ownerFullName || seller.name || ""),
+      gstin: gstin !== undefined ? gstin : (seller.gstNumber || ""),
+      email: email !== undefined ? email : (seller.email || ""),
+      phone: phone !== undefined ? phone : (seller.phone || ""),
+      warehouseAddress: warehouseAddress !== undefined ? warehouseAddress : (address || seller.address || ""),
+      address: address !== undefined ? address : (warehouseAddress || seller.address || ""),
+      pickupContact: pickupContact !== undefined ? pickupContact : "",
+      city: city || seller.city || "",
+      pincode: pincode || seller.pincode || "",
+      deliveryPreferences: deliveryPreferences || seller.deliveryPreferences || {},
+      storeDetails: storeDetails || seller.storeDetails || {},
+      autoAcceptOrders: autoAcceptOrders !== undefined ? autoAcceptOrders : true,
+      emailNotifications: emailNotifications !== undefined ? emailNotifications : true,
+      smsNotifications: smsNotifications !== undefined ? smsNotifications : true,
+      submittedAt: new Date(),
+      previousData: {
+        storeName: seller.storeName || "",
+        storeTagline: seller.storeDetails?.storeTagline || "",
+        sellerLegalName: seller.ownerDetails?.ownerFullName || seller.name || "",
+        gstin: seller.gstNumber || "",
+        email: seller.email || "",
+        phone: seller.phone || "",
+        warehouseAddress: seller.address || ""
+      }
+    };
+
+    // If seller is already approved, changes REQUIRE ADMIN APPROVAL!
+    if (seller.status === "approved") {
+      seller.pendingUpdates = requestedUpdates;
+      seller.pendingUpdatesSubmittedAt = new Date();
+      seller.pendingUpdatesStatus = "pending_review";
+      await seller.save();
+
+      return res.json({
+        success: true,
+        requiresApproval: true,
+        message: "Aapki profile update request submit ho gayi hai aur approval ke liye Admin Portal par bhej di gayi hai. Admin verify karne ke baad ye changes live ho jayenge.",
+        pendingUpdates: requestedUpdates,
+        seller: await Seller.findById(seller._id).select("-password")
+      });
+    }
+
+    // For unverified/pending onboarding sellers, updates apply directly
+    if (storeName) seller.storeName = storeName;
+    if (phone) seller.phone = phone;
+    if (gstin) seller.gstNumber = gstin;
+    if (address || warehouseAddress) seller.address = address || warehouseAddress;
+    if (city) seller.city = city;
+    if (pincode) seller.pincode = pincode;
+    if (deliveryPreferences) seller.deliveryPreferences = deliveryPreferences;
+    if (storeDetails) seller.storeDetails = storeDetails;
+    if (storeTagline) {
+      if (!seller.storeDetails) seller.storeDetails = {};
+      seller.storeDetails.storeTagline = storeTagline;
+    }
+    if (sellerLegalName) {
+      if (!seller.ownerDetails) seller.ownerDetails = {};
+      seller.ownerDetails.ownerFullName = sellerLegalName;
+    }
+
+    await seller.save();
+
     res.json({
       success: true,
+      requiresApproval: false,
       message: "Store settings updated successfully",
-      seller: updatedSeller
+      seller: await Seller.findById(seller._id).select("-password")
     });
   } catch (error) {
     res.status(500).json({ message: "Failed to update seller settings", error: error.message });

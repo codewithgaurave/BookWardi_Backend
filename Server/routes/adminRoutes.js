@@ -37,7 +37,9 @@ import {
   setPendingSeller,
   toggleSellerStatus,
   updateSellerCommission,
-  downloadSellerFinancialStatement
+  downloadSellerFinancialStatement,
+  approveSellerUpdates,
+  rejectSellerUpdates
 } from "../controllers/adminSellerController.js";
 import {
   getAllPayoutsAdmin,
@@ -131,6 +133,8 @@ router.put("/sellers/:id/reject", authenticateAdmin, rejectSeller);
 router.put("/sellers/:id/pending", authenticateAdmin, setPendingSeller);
 router.put("/sellers/:id/status", authenticateAdmin, toggleSellerStatus);
 router.put("/sellers/:id/commission", authenticateAdmin, updateSellerCommission);
+router.put("/sellers/:id/approve-updates", authenticateAdmin, approveSellerUpdates);
+router.put("/sellers/:id/reject-updates", authenticateAdmin, rejectSellerUpdates);
 router.get("/sellers/:id/finance-statement/pdf", authenticateAdmin, downloadSellerFinancialStatement);
 
 // ==========================================
