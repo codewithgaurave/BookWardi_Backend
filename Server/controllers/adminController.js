@@ -1174,6 +1174,7 @@ export const getPublicPlatformSettings = async (req, res) => {
       companyAddress: settings.companyAddress || "Lucknow, Uttar Pradesh - 226001",
       companyGstin: settings.companyGstin || "09AAACB1234F1Z9",
       supportEmail: settings.supportEmail || settings.customerCareEmail || "support@bookvardi.in",
+      sellerSupportEmail: settings.sellerSupportEmail || settings.supportEmail || "sellers@bookvardi.in",
       supportPhone: settings.supportPhone || settings.customerCarePhone || "+91 98765 43210",
       customerCareEmail: settings.customerCareEmail || settings.supportEmail || "support@bookvardi.in",
       customerCarePhone: settings.customerCarePhone || settings.supportPhone || "+91 98765 43210",
@@ -1191,7 +1192,8 @@ export const getPublicPlatformSettings = async (req, res) => {
       customerCarePhone: "+91 98765 43210",
       customerCareEmail: "support@bookvardi.in",
       supportPhone: "+91 98765 43210",
-      supportEmail: "support@bookvardi.in"
+      supportEmail: "support@bookvardi.in",
+      sellerSupportEmail: "sellers@bookvardi.in"
     });
   }
 };

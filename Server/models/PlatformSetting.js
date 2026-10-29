@@ -17,6 +17,7 @@ const platformSettingSchema = new mongoose.Schema({
   companyGstin: { type: String, default: "09AAACB1234F1Z9" },
   maintenanceMode: { type: Boolean, default: false },
   supportEmail: { type: String, default: "support@bookvardi.in" },
+  sellerSupportEmail: { type: String, default: "sellers@bookvardi.in" },
   supportPhone: { type: String, default: "+91 98765 43210" },
   customerCareEmail: { type: String, default: "support@bookvardi.in" },
   customerCarePhone: { type: String, default: "+91 98765 43210" },
