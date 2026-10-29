@@ -34,3 +34,4 @@ ticketSchema.index({ status: 1 });
 ticketSchema.index({ createdAt: -1 });
 
 export default mongoose.model("Ticket", ticketSchema);
+

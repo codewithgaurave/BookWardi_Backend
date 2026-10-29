@@ -102,6 +102,8 @@ export const registerSeller = async (req, res) => {
     const bankName = req.body.bankName || "";
     const branchName = req.body.branchName || req.body.bankBranch || "";
     const aadhaarNumber = req.body.aadhaarNumber || req.body.ownerAadhaarLast4 || "";
+    const cleanAadhaarDigits = String(aadhaarNumber).replace(/\D/g, "");
+    const cleanOwnerAadhaarLast4 = cleanAadhaarDigits.length >= 4 ? cleanAadhaarDigits.slice(-4) : cleanAadhaarDigits;
     const panNumber = req.body.panNumber || req.body.ownerPan || req.body.businessPan || "";
     const yearStarted = req.body.yearStarted || "";
 
@@ -140,7 +142,7 @@ export const registerSeller = async (req, res) => {
       ownerFullName: req.body.ownerFullName || name || "",
       ownerDesignation: req.body.ownerDesignation || "Proprietor",
       ownerPan: req.body.ownerPan || req.body.businessPan || panNumber || "",
-      ownerAadhaarLast4: req.body.ownerAadhaarLast4 || aadhaarNumber || ""
+      ownerAadhaarLast4: cleanOwnerAadhaarLast4
     };
 
     const addressDetailsObj = {
@@ -642,11 +644,15 @@ export const updateSellerProfile = async (req, res) => {
     };
 
     if (ownerFullName || designation || ownerDesignation || req.body.ownerPan || req.body.ownerAadhaarLast4) {
+      const rawUpdateAadhaar = req.body.ownerAadhaarLast4 || req.body.aadhaarNumber || seller.ownerDetails?.ownerAadhaarLast4 || "";
+      const updateAadhaarDigits = String(rawUpdateAadhaar).replace(/\D/g, "");
+      const cleanUpdateAadhaarLast4 = updateAadhaarDigits.length >= 4 ? updateAadhaarDigits.slice(-4) : updateAadhaarDigits;
+
       updates.ownerDetails = {
         ownerFullName: ownerFullName || finalName || seller.ownerDetails?.ownerFullName || seller.name || "",
         ownerDesignation: designation || ownerDesignation || seller.ownerDetails?.ownerDesignation || "Proprietor",
         ownerPan: req.body.ownerPan || req.body.businessPan || seller.ownerDetails?.ownerPan || "",
-        ownerAadhaarLast4: req.body.ownerAadhaarLast4 || req.body.aadhaarNumber || seller.ownerDetails?.ownerAadhaarLast4 || ""
+        ownerAadhaarLast4: cleanUpdateAadhaarLast4
       };
     }
 
@@ -1344,11 +1350,15 @@ export const updateSellerApplication = async (req, res) => {
     if (req.body.businessType) updates.businessType = req.body.businessType;
     if (req.body.annualTurnoverEstimate) updates.annualTurnoverEstimate = req.body.annualTurnoverEstimate;
 
+    const rawAdminAadhaar = req.body.ownerAadhaarLast4 || req.body.aadhaarNumber || existingSeller.ownerDetails?.ownerAadhaarLast4 || "";
+    const adminAadhaarDigits = String(rawAdminAadhaar).replace(/\D/g, "");
+    const cleanAdminAadhaarLast4 = adminAadhaarDigits.length >= 4 ? adminAadhaarDigits.slice(-4) : adminAadhaarDigits;
+
     updates.ownerDetails = {
       ownerFullName: ownerFullName || req.body.name || existingSeller.ownerDetails?.ownerFullName || existingSeller.name || "",
       ownerDesignation: ownerDesignation || existingSeller.ownerDetails?.ownerDesignation || "Proprietor",
       ownerPan: ownerPan || businessPan || req.body.pan || existingSeller.ownerDetails?.ownerPan || "",
-      ownerAadhaarLast4: req.body.ownerAadhaarLast4 || req.body.aadhaarNumber || existingSeller.ownerDetails?.ownerAadhaarLast4 || ""
+      ownerAadhaarLast4: cleanAdminAadhaarLast4
     };
 
     updates.addressDetails = {
