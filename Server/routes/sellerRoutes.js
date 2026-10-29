@@ -191,6 +191,10 @@ import {
   updateReviewStatus,
   replyToSellerReview
 } from "../controllers/reviewController.js";
+import {
+  createTicket,
+  getSellerTickets
+} from "../controllers/ticketController.js";
 
 // ==========================================
 // 8. Seller Customer Reviews Moderation
@@ -198,6 +202,12 @@ import {
 router.get("/reviews", authenticateSeller, getSellerReviews);
 router.patch("/reviews/:id/approve", authenticateSeller, updateReviewStatus);
 router.post("/reviews/:id/reply", authenticateSeller, replyToSellerReview);
+
+// ==========================================
+// 9. Seller Support Helpdesk Tickets
+// ==========================================
+router.post("/tickets", authenticateSeller, createTicket);
+router.get("/tickets", authenticateSeller, getSellerTickets);
 
 export default router;
 

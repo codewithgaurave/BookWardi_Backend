@@ -52,6 +52,11 @@ import {
   exportSellersAdmin
 } from "../controllers/exportController.js";
 import {
+  getAdminTickets,
+  updateTicketStatusAdmin,
+  replyTicketAdmin
+} from "../controllers/ticketController.js";
+import {
   getAdminKits,
   getAdminKitById,
   updateKitApproval,
@@ -157,6 +162,13 @@ router.get("/export/orders", authenticateAdmin, exportOrdersAdmin);
 router.get("/export/products", authenticateAdmin, exportProductsAdmin);
 router.get("/export/users", authenticateAdmin, exportUsersAdmin);
 router.get("/export/sellers", authenticateAdmin, exportSellersAdmin);
+
+// ==========================================
+// Admin Support & Helpdesk Tickets
+// ==========================================
+router.get("/tickets", authenticateAdmin, getAdminTickets);
+router.put("/tickets/:id/status", authenticateAdmin, updateTicketStatusAdmin);
+router.post("/tickets/:id/reply", authenticateAdmin, replyTicketAdmin);
 
 export default router;
 
