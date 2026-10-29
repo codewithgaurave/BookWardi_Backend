@@ -1133,8 +1133,80 @@ export const generateTaxInvoicePDF = (order, filterSellerId = null, options = {}
     doc.strokeColor("#bbf7d0").lineWidth(0.5).moveTo(40, y - 2).lineTo(555, y - 2).stroke();
   }
 
+  // Dedicated COD Charges Line Item (if Cash on Delivery order)
+  const rawCodFee = Number(order.codFee ?? order.codCharges ?? order.appliedCodFee ?? order.settlement?.codChargeAmount ?? 0);
+  const effectiveCodFeeInTotal = (isCod && rawCodFee > 0) ? rawCodFee : 0;
+  if (effectiveCodFeeInTotal > 0) {
+    totalTaxableValue += effectiveCodFeeInTotal;
+  }
+
+  if (isCod) {
+    const codRowBg = rawCodFee > 0 ? "#fffbeb" : "#fefce8";
+    const rowHeight = 30;
+    doc.rect(40, y - 2, 515, rowHeight).fill(codRowBg);
+
+    if (rawCodFee > 0) {
+      doc
+        .fontSize(7.5)
+        .font("Helvetica-Bold")
+        .fillColor(primaryColor)
+        .text("Cash on Delivery (COD) Charges", 45, y + 2, { width: 155 })
+        .font("Helvetica")
+        .fontSize(6.5)
+        .fillColor(mutedColor)
+        .text("Doorstep Cash Collection (SAC 998544)", 45, y + 13, { width: 155 })
+        .fontSize(7)
+        .font("Helvetica-Bold")
+        .fillColor(primaryColor)
+        .text("-", 202, y + 5, { width: 85, align: "center" })
+        .fontSize(7.5)
+        .text("1", 289, y + 5, { width: 26, align: "center" })
+        .font("Helvetica")
+        .fillColor(mutedColor)
+        .text(`Rs. ${rawCodFee.toFixed(2)}`, 317, y + 5, { width: 45, align: "right" })
+        .text(`Rs. ${rawCodFee.toFixed(2)}`, 364, y + 5, { width: 50, align: "right" })
+        .fontSize(6.5)
+        .fillColor(mutedColor)
+        .text("0% GST (Exempt)", 416, y + 5, { width: 75, align: "right" })
+        .fontSize(7.5)
+        .font("Helvetica-Bold")
+        .fillColor(primaryColor)
+        .text(`Rs. ${rawCodFee.toFixed(2)}`, 475, y + 5, { width: 75, align: "right" });
+    } else {
+      doc
+        .fontSize(7.5)
+        .font("Helvetica-Bold")
+        .fillColor("#b45309")
+        .text("Cash on Delivery (COD) Charges [FREE]", 45, y + 2, { width: 155 })
+        .font("Helvetica")
+        .fontSize(6.5)
+        .fillColor("#d97706")
+        .text("Free COD Promotion (Admin Absorbed)", 45, y + 13, { width: 155 })
+        .fontSize(7)
+        .font("Helvetica-Bold")
+        .fillColor(primaryColor)
+        .text("-", 202, y + 5, { width: 85, align: "center" })
+        .fontSize(7.5)
+        .text("NA", 289, y + 5, { width: 26, align: "center" })
+        .font("Helvetica")
+        .fillColor(mutedColor)
+        .text("Rs. 40.00", 317, y + 5, { width: 45, align: "right" })
+        .text("Rs. 0.00", 364, y + 5, { width: 50, align: "right" })
+        .fontSize(6.5)
+        .fillColor("#b45309")
+        .text("0% GST (Exempt)", 416, y + 5, { width: 75, align: "right" })
+        .fontSize(7.5)
+        .font("Helvetica-Bold")
+        .fillColor("#047857")
+        .text("FREE (Rs. 0.00)", 475, y + 5, { width: 75, align: "right" });
+    }
+
+    y += rowHeight;
+    doc.strokeColor("#fde68a").lineWidth(0.5).moveTo(40, y - 2).lineTo(555, y - 2).stroke();
+  }
+
   // 6. TOTALS CALCULATION
-  const calculatedGrandTotal = Math.max(0, Math.round((subtotal + shippingCost - totalDiscounts) * 100) / 100);
+  const calculatedGrandTotal = Math.max(0, Math.round((subtotal + shippingCost - totalDiscounts + effectiveCodFeeInTotal) * 100) / 100);
 
   let taxableValue = Math.round(totalTaxableValue * 100) / 100;
   let totalTax = Math.round(totalTaxAmount * 100) / 100;
