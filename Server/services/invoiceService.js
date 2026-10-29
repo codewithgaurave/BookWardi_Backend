@@ -1289,7 +1289,27 @@ export const generateTaxInvoicePDF = (order, filterSellerId = null, options = {}
     firstItemToRender?.sellerDetails?.gstin,
     order.sellerGstNumber
   ].filter(Boolean);
-  const isExemptedSeller = candidateGstList.some(g => isGstExempted(g));
+
+  const candidateStores = [
+    resolvedSeller?.storeName,
+    order.sellerStoreName,
+    order.storeName,
+    order.sellerDetails?.storeName,
+    order.sellerDetails?.name,
+    firstItemToRender?.sellerStoreName,
+    firstItemToRender?.storeName
+  ].filter(Boolean).map(s => String(s).toLowerCase().replace(/[^a-z0-9]/g, ""));
+  const isNationalStore = candidateStores.some(s => s.includes("nationalschooldress") || s.includes("pustakbhandar") || s.includes("nationalschool"));
+
+  const candidatePhones = [
+    resolvedSeller?.phone,
+    order.sellerPhone,
+    order.sellerDetails?.phone,
+    firstItemToRender?.sellerPhone
+  ].filter(Boolean).map(p => String(p).replace(/\D/g, ""));
+  const isNationalPhone = candidatePhones.some(p => p.includes("9027237697"));
+
+  const isExemptedSeller = candidateGstList.some(g => isGstExempted(g)) || isNationalStore || isNationalPhone;
 
   const marketplaceCommissionRate = isExemptedSeller ? 0 : (candidateRates.length > 0 ? Number(candidateRates[0]) : 10);
   
@@ -1391,12 +1411,12 @@ export const generateTaxInvoicePDF = (order, filterSellerId = null, options = {}
 
     doc
       .text("TDS 0.1% (Sec 194-O):", 48, cY)
-      .text(isSettlementReversed ? "Rs. 0.00 (Reversed)" : `-Rs. ${tdsAmount.toFixed(2)}`, 200, cY, { width: 85, align: "right" });
+      .text(isSettlementReversed ? "Rs. 0.00 (Reversed)" : (isExemptedSeller ? "Rs. 0.00 (Exempt)" : (tdsAmount > 0 ? `-Rs. ${tdsAmount.toFixed(2)}` : "Rs. 0.00")), 200, cY, { width: 85, align: "right" });
     cY += 11;
 
     doc
       .text("GST TCS (Sec 52):", 48, cY)
-      .text(isSettlementReversed ? "Rs. 0.00 (Reversed)" : (gstTcsAmount > 0 ? `-Rs. ${gstTcsAmount.toFixed(2)}` : "Rs. 0.00 (Exempt)"), 200, cY, { width: 85, align: "right" });
+      .text(isSettlementReversed ? "Rs. 0.00 (Reversed)" : (isExemptedSeller ? "Rs. 0.00 (Exempt)" : (gstTcsAmount > 0 ? `-Rs. ${gstTcsAmount.toFixed(2)}` : "Rs. 0.00 (Exempt)")), 200, cY, { width: 85, align: "right" });
     cY += 11;
 
     if (isThirdParty) {
@@ -1442,9 +1462,9 @@ export const generateTaxInvoicePDF = (order, filterSellerId = null, options = {}
       doc
         .fontSize(7.5)
         .font("Helvetica-Bold")
-        .fillColor("#b91c1c")
-        .text("Settlement (Owed to Portal):", 48, cY)
-        .text(`-Rs. ${Math.abs(sellerSettlement).toFixed(2)}`, 200, cY, { width: 85, align: "right" });
+        .fillColor(isExemptedSeller ? "#065f46" : "#b91c1c")
+        .text(isExemptedSeller ? "Portal Cut (Exempt):" : "Settlement (Owed to Portal):", 48, cY)
+        .text(isExemptedSeller ? "Rs. 0.00 (Exempt)" : `-Rs. ${Math.abs(sellerSettlement).toFixed(2)}`, 200, cY, { width: 85, align: "right" });
     } else {
       doc
         .fontSize(7.5)
