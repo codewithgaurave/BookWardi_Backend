@@ -513,8 +513,8 @@ export const downloadSellerFinancialStatement = async (req, res) => {
         sellerState,
         customerState,
         deliveryCharge: o.shippingAmount || o.deliveryCharge || 40,
-        freeDeliveryThreshold: Number(o.freeDeliveryThreshold ?? 401),
-        deliveryChargeBorneBy: o.deliveryChargeBorneBy || (ordTotalVal >= Number(o.freeDeliveryThreshold ?? 401) ? 'admin' : (Number(o.shippingAmount || 0) > 0 ? 'customer' : 'seller'))
+        freeDeliveryThreshold: Number(o.freeDeliveryThreshold && o.freeDeliveryThreshold !== 401 ? o.freeDeliveryThreshold : 1000),
+        deliveryChargeBorneBy: o.deliveryChargeBorneBy || (ordTotalVal >= Number(o.freeDeliveryThreshold && o.freeDeliveryThreshold !== 401 ? o.freeDeliveryThreshold : 1000) ? 'admin' : (Number(o.shippingAmount || 0) > 0 ? 'customer' : 'seller'))
       });
 
       if (!isCancelled) {

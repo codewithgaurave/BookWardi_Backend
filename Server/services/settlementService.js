@@ -72,7 +72,7 @@ export const SETTLEMENT_RULES = {
     gstOnCommissionRate: 18,    // 18%
     tdsRate: 0.1,              // 0.1%
     gstTcsRate: 0.5,           // 0.5%
-    freeDeliveryThreshold: 401  // Dynamic: Orders >= threshold (default ₹401) have delivery charges absorbed by Admin
+    freeDeliveryThreshold: 1000  // Dynamic: Orders >= threshold (default ₹1000) have delivery charges absorbed by Admin
   },
   COD_SELF_DELIVERY: {
     code: "COD_SELF_DELIVERY",
@@ -95,7 +95,7 @@ export const SETTLEMENT_RULES = {
     gstOnCommissionRate: 18,    // 18%
     tdsRate: 0.1,              // 0.1%
     gstTcsRate: 0.5,           // 0.5% (लागू कानून के अनुसार जब कूरियर पोर्टल को भुगतान करता है)
-    freeDeliveryThreshold: 401, // Dynamic: Orders >= threshold (default ₹401) have delivery charges absorbed by Admin
+    freeDeliveryThreshold: 1000, // Dynamic: Orders >= threshold (default ₹1000) have delivery charges absorbed by Admin
     isSellerCollectedCash: false, // Courier remits collected cash to Portal
     codChargePolicy: "portal",   // COD चार्ज पोर्टल के पास रहेगा (छूट: 09BLMPK2840L2ZN से कूरियर में भी नहीं कटेगा)
     exemptGstList: EXEMPTED_GST_NUMBERS
@@ -201,8 +201,8 @@ export function calculateSellerSettlement(grossSale, options = {}) {
       igstTcsRate: 0,
       igstTcsAmount: 0,
       // Delivery charges waived
-      isAbove400: gross >= Number(options.freeDeliveryThreshold ?? options.minOrderFreeShipping ?? options.freeShippingThreshold ?? 401),
-      isAboveThreshold: gross >= Number(options.freeDeliveryThreshold ?? options.minOrderFreeShipping ?? options.freeShippingThreshold ?? 401),
+      isAbove400: gross >= Number(options.freeDeliveryThreshold ?? options.minOrderFreeShipping ?? options.freeShippingThreshold ?? 1000),
+      isAboveThreshold: gross >= Number(options.freeDeliveryThreshold ?? options.minOrderFreeShipping ?? options.freeShippingThreshold ?? 1000),
       deliveryChargeBorneBy: "none",
       deliveryChargeAmount: 0,
       gstOnDeliveryRate: 0,
@@ -440,11 +440,11 @@ export function calculateSellerSettlement(grossSale, options = {}) {
   // ऑर्डर राशि यदि फ्री डिलीवरी थ्रेशोल्ड से अधिक है, तो एडमिन डिलीवरी खर्च वहन करेगा (सेलर से ₹0 कटौती)।
   const totalOrderValue = Number(options.orderTotal || options.totalAmount || effectiveGrossSale);
   const freeDeliveryThreshold = Number(
-    options.freeDeliveryThreshold ?? 
+    (options.freeDeliveryThreshold && options.freeDeliveryThreshold !== 401 ? options.freeDeliveryThreshold : null) ?? 
     options.minOrderFreeShipping ?? 
     options.freeShippingThreshold ?? 
     rule.freeDeliveryThreshold ??
-    401
+    1000
   );
   const isAboveThreshold = totalOrderValue >= freeDeliveryThreshold;
   const isAbove400 = isAboveThreshold; // Backward compatibility alias

@@ -1340,7 +1340,8 @@ export const generateTaxInvoicePDF = (order, filterSellerId = null, options = {}
   // GST TCS under Sec 52 of CGST Act: strictly on Taxable Value (net value of taxable supplies), NOT gross!
   const gstTcsAmount = (isSettlementReversed || isExemptedSeller || isRule3CodSelf || isTaxFreeOrder) ? 0 : Math.round(((settlementTaxable * tcsRate) / 100) * 100) / 100;
 
-  const freeDeliveryThreshold = Number(order.freeDeliveryThreshold ?? order.minOrderFreeShipping ?? 401);
+  const rawThreshold = Number(order.freeDeliveryThreshold ?? order.minOrderFreeShipping ?? order.freeShippingThreshold);
+  const freeDeliveryThreshold = (!isNaN(rawThreshold) && rawThreshold > 0 && rawThreshold !== 401) ? rawThreshold : 1000;
   const isAboveThreshold = (settlementGross >= freeDeliveryThreshold || calculatedGrandTotal >= freeDeliveryThreshold || Number(order.total || order.totalAmount || 0) >= freeDeliveryThreshold);
   const isAbove400 = isAboveThreshold;
   const customerShippingPaid = Number(shippingCost || order.shippingFee || order.shippingCost || order.shippingAmount || 0);

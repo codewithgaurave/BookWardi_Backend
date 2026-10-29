@@ -20,6 +20,14 @@ export const invalidateSellerOrdersCache = () => {
 };
 global.__invalidateSellerOrdersCache = invalidateSellerOrdersCache;
 
+export const resolveOrderFreeDeliveryThreshold = (val) => {
+  const num = Number(val);
+  if (!isNaN(num) && num > 0 && num !== 401) {
+    return num;
+  }
+  return 1000;
+};
+
 // Canonical Order Status Normalizer
 export const normalizeOrderStatus = (raw, contextOrder = null) => {
   if (!raw) return "Pending";
@@ -427,7 +435,8 @@ export const formatSellerSingleOrder = (o, scope = null) => {
   const settlementGross = Math.max(0, Math.round((computedItemsSubtotal - resolvedDiscount) * 100) / 100);
 
   const customerShippingFee = Number(o.shippingFee ?? o.shippingCost ?? o.shippingAmount ?? 0);
-  const resolvedBorneBy = o.deliveryChargeBorneBy || (ordTotalVal >= Number(o.freeDeliveryThreshold ?? 401) ? 'admin' : (customerShippingFee > 0 ? 'customer' : 'seller'));
+  const resolvedDelivThreshold = resolveOrderFreeDeliveryThreshold(o.freeDeliveryThreshold);
+  const resolvedBorneBy = o.deliveryChargeBorneBy || (ordTotalVal >= resolvedDelivThreshold ? 'admin' : (customerShippingFee > 0 ? 'customer' : 'seller'));
 
   const sellerGstVal = scope?.gstNumber || o.sellerDetails?.gstNumber || orderItems[0]?.sellerDetails?.gstNumber || "";
   const orderSettlement = calculateSellerSettlement(settlementGross, {
@@ -447,7 +456,7 @@ export const formatSellerSingleOrder = (o, scope = null) => {
     shippingCost: customerShippingFee,
     codFee: isMultiSeller ? 0 : codFee,
     appliedCodFee: isMultiSeller ? 0 : codFee,
-    freeDeliveryThreshold: Number(o.freeDeliveryThreshold ?? 401),
+    freeDeliveryThreshold: resolvedDelivThreshold,
     deliveryChargeBorneBy: resolvedBorneBy,
     isCancelled: isCancelledOrder,
     isRefunded: isCancelledOrder
@@ -561,7 +570,7 @@ export const formatSellerSingleOrder = (o, scope = null) => {
         shippingCost: customerShippingFee,
         codFee: isMultiSeller ? 0 : codFee,
         appliedCodFee: isMultiSeller ? 0 : codFee,
-        freeDeliveryThreshold: Number(o.freeDeliveryThreshold ?? 401),
+        freeDeliveryThreshold: resolvedDelivThreshold,
         deliveryChargeBorneBy: resolvedBorneBy,
         isCancelled: isItemCancelled,
         isRefunded: isItemCancelled
@@ -927,7 +936,7 @@ export const updateSellerOrderItemStatus = async (req, res) => {
     const itGstRate = Number(item.gstRate ?? item.gstPercent ?? item.gstPercentage ?? item.gst ?? (item.category?.toLowerCase()?.includes('book') ? 0 : 5));
     const customerShippingFee = Number(order.shippingFee ?? order.shippingCost ?? order.shippingAmount ?? 0);
     const ordTotalVal = Number(order.totalAmount || order.total || itemGross);
-    const freeDeliveryThreshold = Number(order.freeDeliveryThreshold ?? 401);
+    const freeDeliveryThreshold = resolveOrderFreeDeliveryThreshold(order.freeDeliveryThreshold);
     const resolvedBorneBy = (ordTotalVal >= freeDeliveryThreshold) ? 'admin' : (customerShippingFee > 0 ? 'customer' : (order.deliveryChargeBorneBy || 'seller'));
 
     const itemStl = calculateSellerSettlement(itemGross, {
@@ -1282,7 +1291,7 @@ export const updateSellerOrderStatus = async (req, res) => {
         const itGstRate = Number(itemObj.gstRate ?? itemObj.gstPercent ?? itemObj.gstPercentage ?? itemObj.gst ?? (itemObj.category?.toLowerCase()?.includes('book') ? 0 : 5));
         const customerShippingFee = Number(order.shippingFee ?? order.shippingCost ?? order.shippingAmount ?? 0);
         const ordTotalVal = Number(order.totalAmount || order.total || itemGross);
-        const freeDeliveryThreshold = Number(order.freeDeliveryThreshold ?? 401);
+        const freeDeliveryThreshold = resolveOrderFreeDeliveryThreshold(order.freeDeliveryThreshold);
         const resolvedBorneBy = (ordTotalVal >= freeDeliveryThreshold) ? 'admin' : (customerShippingFee > 0 ? 'customer' : (order.deliveryChargeBorneBy || 'seller'));
 
         const itemStl = calculateSellerSettlement(itemGross, {

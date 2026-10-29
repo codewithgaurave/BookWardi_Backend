@@ -1726,12 +1726,12 @@ export const createOrder = async (req, res) => {
       }
 
     // Fetch dynamic platform logistics settings for free delivery threshold
-    let dynamicThreshold = 401;
+    let dynamicThreshold = 1000;
     let universalShippingFee = 49;
     let universalCodFee = 0;
     try {
       const globalSettings = await PlatformSetting.findOne({ key: "global_settings" }).lean();
-      dynamicThreshold = Number(globalSettings?.freeShippingThreshold ?? globalSettings?.minOrderFreeShipping ?? 401);
+      dynamicThreshold = Number(globalSettings?.freeShippingThreshold ?? globalSettings?.minOrderFreeShipping ?? 1000);
       universalShippingFee = Number(globalSettings?.shippingFee ?? 49);
       universalCodFee = Number(globalSettings?.codFee ?? 0);
     } catch (e) {
@@ -2678,8 +2678,8 @@ export const updateOrder = async (req, res) => {
                 shippingCost: Number(existingOrder.shippingFee ?? existingOrder.shippingCost ?? existingOrder.shippingAmount ?? 0),
                 codFee: Number(existingOrder.codFee ?? existingOrder.appliedCodFee ?? existingOrder.codCharges ?? 0),
                 appliedCodFee: Number(existingOrder.appliedCodFee ?? existingOrder.codFee ?? 0),
-                freeDeliveryThreshold: Number(existingOrder.freeDeliveryThreshold ?? 401),
-                deliveryChargeBorneBy: (ordTotal >= Number(existingOrder.freeDeliveryThreshold ?? 401)) 
+                freeDeliveryThreshold: Number(existingOrder.freeDeliveryThreshold && existingOrder.freeDeliveryThreshold !== 401 ? existingOrder.freeDeliveryThreshold : 1000),
+                deliveryChargeBorneBy: (ordTotal >= Number(existingOrder.freeDeliveryThreshold && existingOrder.freeDeliveryThreshold !== 401 ? existingOrder.freeDeliveryThreshold : 1000)) 
                   ? 'admin' 
                   : (Number(existingOrder.shippingFee ?? existingOrder.shippingCost ?? existingOrder.shippingAmount ?? 0) > 0 
                       ? 'customer' 

@@ -223,7 +223,7 @@ const orderSchema = new mongoose.Schema(
     subtotal: { type: Number, default: 0 },
     shippingCost: { type: Number, default: 0 },
     shippingFee: { type: Number, default: 0 },
-    freeDeliveryThreshold: { type: Number, default: 401 },
+    freeDeliveryThreshold: { type: Number, default: 1000 },
     codFee: { type: Number, default: 0 },
     appliedCodFee: { type: Number, default: 0 },
     discount: { type: Number, default: 0 },
