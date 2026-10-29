@@ -1487,7 +1487,21 @@ export const downloadSellerInvoice = async (req, res) => {
     res.setHeader("Content-Type", "application/pdf");
     res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
 
-    const pdfDoc = generateTaxInvoicePDF(enrichedOrder, sellerId, { view: "seller" });
+    let platformSettings = {};
+    try {
+      const PlatformSetting = (await import("../models/PlatformSetting.js")).default;
+      platformSettings = (await PlatformSetting.findOne({ key: "global_settings" })) || {};
+    } catch (e) {}
+
+    const pdfDoc = generateTaxInvoicePDF(enrichedOrder, sellerId, {
+      view: "seller",
+      platformSetting: platformSettings,
+      companyName: platformSettings.companyName,
+      companyAddress: platformSettings.companyAddress,
+      companyGstin: platformSettings.companyGstin,
+      supportEmail: platformSettings.supportEmail || platformSettings.customerCareEmail,
+      supportPhone: platformSettings.supportPhone || platformSettings.customerCarePhone
+    });
     pdfDoc.pipe(res);
   } catch (error) {
     console.error("Seller invoice download error:", error);
@@ -1543,7 +1557,18 @@ export const downloadSellerCreditNote = async (req, res) => {
     res.setHeader("Content-Type", "application/pdf");
     res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
 
-    const pdfDoc = generateCreditNotePDF(enrichedOrder, sellerId);
+    let platformSettings = {};
+    try {
+      const PlatformSetting = (await import("../models/PlatformSetting.js")).default;
+      platformSettings = (await PlatformSetting.findOne({ key: "global_settings" })) || {};
+    } catch (e) {}
+
+    const pdfDoc = generateCreditNotePDF(enrichedOrder, sellerId, {
+      platformSetting: platformSettings,
+      companyName: platformSettings.companyName,
+      companyAddress: platformSettings.companyAddress,
+      companyGstin: platformSettings.companyGstin
+    });
     pdfDoc.pipe(res);
   } catch (error) {
     console.error("Seller credit note download error:", error);
@@ -1571,7 +1596,18 @@ export const downloadSellerExchangeInvoice = async (req, res) => {
     res.setHeader("Content-Type", "application/pdf");
     res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
 
-    const pdfDoc = generateExchangeInvoicePDF(enrichedOrder, sellerId);
+    let platformSettings = {};
+    try {
+      const PlatformSetting = (await import("../models/PlatformSetting.js")).default;
+      platformSettings = (await PlatformSetting.findOne({ key: "global_settings" })) || {};
+    } catch (e) {}
+
+    const pdfDoc = generateExchangeInvoicePDF(enrichedOrder, sellerId, {
+      platformSetting: platformSettings,
+      companyName: platformSettings.companyName,
+      companyAddress: platformSettings.companyAddress,
+      companyGstin: platformSettings.companyGstin
+    });
     pdfDoc.pipe(res);
   } catch (error) {
     console.error("Seller exchange invoice download error:", error);

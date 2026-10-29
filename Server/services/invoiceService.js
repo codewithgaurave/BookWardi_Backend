@@ -1573,7 +1573,7 @@ const getProductGstRate = (item) => {
  * @param {Object} [filterSellerId] - Optional seller ID
  * @returns {PDFDocument} - Streaming PDF document
  */
-export const generateCreditNotePDF = (order, filterSellerId = null) => {
+export const generateCreditNotePDF = (order, filterSellerId = null, options = {}) => {
   if (!order) {
     throw new Error("Order data is required to generate credit note.");
   }
@@ -1653,9 +1653,9 @@ export const generateCreditNotePDF = (order, filterSellerId = null) => {
   // Top accent bar
   doc.rect(40, 36, 515, 3).fill(roseColor);
 
-  const compNameCN = order.platformSettings?.companyName || "Book Vardi";
-  const compAddrCN = order.platformSettings?.companyAddress || "Lucknow, Uttar Pradesh - 226001";
-  const compGstinCN = order.platformSettings?.companyGstin || "09AAACB1234F1Z9";
+  const compNameCN = options.companyName || options.platformSetting?.companyName || order.platformSettings?.companyName || "Book Vardi";
+  const compAddrCN = options.companyAddress || options.platformSetting?.companyAddress || order.platformSettings?.companyAddress || "Lucknow, Uttar Pradesh - 226001";
+  const compGstinCN = options.companyGstin || options.platformSetting?.companyGstin || order.platformSettings?.companyGstin || "09AAACB1234F1Z9";
 
   // 1. HEADER SECTION (Brand & Credit Note Title)
   doc
@@ -2140,7 +2140,7 @@ export const generateCreditNotePDF = (order, filterSellerId = null) => {
  * @param {Object} [filterSellerId] - Optional seller ID
  * @returns {PDFDocument} - Streaming PDF document
  */
-export const generateExchangeInvoicePDF = (order, filterSellerId = null) => {
+export const generateExchangeInvoicePDF = (order, filterSellerId = null, options = {}) => {
   if (!order) {
     throw new Error("Order data is required to generate exchange invoice.");
   }
@@ -2179,9 +2179,9 @@ export const generateExchangeInvoicePDF = (order, filterSellerId = null) => {
   // Top accent bar
   doc.rect(40, 36, 515, 3).fill(darkTeal);
 
-  const compNameEx = order.platformSettings?.companyName || "Book Vardi";
-  const compAddrEx = order.platformSettings?.companyAddress || "Lucknow, Uttar Pradesh - 226001";
-  const compGstinEx = order.platformSettings?.companyGstin || "09AAACB1234F1Z9";
+  const compNameEx = options.companyName || options.platformSetting?.companyName || order.platformSettings?.companyName || "Book Vardi";
+  const compAddrEx = options.companyAddress || options.platformSetting?.companyAddress || order.platformSettings?.companyAddress || "Lucknow, Uttar Pradesh - 226001";
+  const compGstinEx = options.companyGstin || options.platformSetting?.companyGstin || order.platformSettings?.companyGstin || "09AAACB1234F1Z9";
 
   // 1. HEADER SECTION (Brand & Tax Invoice Title)
   doc
