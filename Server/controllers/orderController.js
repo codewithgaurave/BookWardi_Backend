@@ -3910,14 +3910,14 @@ export const updateReturnExchangeStatus = async (req, res) => {
       // Customer-initiated → Admin/Seller decision
       "return_requested":    ["return_approved", "return_rejected", "rejected", "approved"],
       "exchange_requested":  ["exchange_approved", "exchange_rejected", "rejected", "approved"],
-      // Approved → pickup
+      // Approved → pickup or doorstep exchange dispatch
       "return_approved":     ["pickup_scheduled", "return_rejected", "rejected"],
-      "exchange_approved":   ["pickup_scheduled", "exchange_rejected", "rejected"],
-      // Pickup → received
-      "pickup_scheduled":    ["product_received", "product_return_received"],
+      "exchange_approved":   ["exchange_dispatched", "pickup_scheduled", "exchanged", "exchange_rejected", "rejected"],
+      // Pickup → received or exchange dispatch
+      "pickup_scheduled":    ["product_received", "product_return_received", "exchange_dispatched", "exchanged"],
       // Received → refund or dispatch
-      "product_received":    ["refund_initiated", "refund_completed", "refunded", "refund_processed", "exchange_dispatched"],
-      "product_return_received": ["refund_initiated", "refund_completed", "refunded", "refund_processed", "exchange_dispatched"],
+      "product_received":    ["refund_initiated", "refund_completed", "refunded", "refund_processed", "exchange_dispatched", "exchanged"],
+      "product_return_received": ["refund_initiated", "refund_completed", "refunded", "refund_processed", "exchange_dispatched", "exchanged"],
       // Refund progression
       "refund_initiated":    ["refund_completed", "refunded", "refund_processed"],
       // Exchange dispatch → complete
@@ -4158,6 +4158,22 @@ export const updateReturnExchangeStatus = async (req, res) => {
       overallStatus = "exchanged";
       title = "Exchange Completed";
       description = description || `Exchange order completed and replacement delivered to customer.`;
+
+      // Auto-restore inventory stock for the returned old item if not yet done
+      if (!order.stockRestored) {
+        if (targetItem) {
+          try {
+            await incrementItemStock(targetItem);
+          } catch (err) {}
+        } else if (Array.isArray(order.items)) {
+          for (const item of order.items) {
+            try {
+              await incrementItemStock(item);
+            } catch (err) {}
+          }
+        }
+        order.stockRestored = true;
+      }
 
       // Auto-schedule settlement maturity strictly 1 day after exchange date
       const exchangedNow = new Date();

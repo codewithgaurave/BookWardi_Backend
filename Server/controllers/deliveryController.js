@@ -739,8 +739,8 @@ export const verifyDeliveryOtp = async (req, res) => {
       });
     }
 
-    // Auto-restore stock for returned items upon OTP verification
-    if (isReturnOrder) {
+    // Auto-restore stock for returned / exchanged items upon OTP verification
+    if (isReturnOrder || isExchangeOrder) {
       try {
         const Product = (await import("../models/Product.js")).default;
         for (const item of order.items || []) {
@@ -748,7 +748,7 @@ export const verifyDeliveryOtp = async (req, res) => {
           const qty = Number(item.quantity || 1);
           if (pId && Product) {
             await Product.findByIdAndUpdate(pId, { $inc: { stock: qty } });
-            console.log(`📦 [AUTO-RESTOCK] Restored ${qty} units to product ${pId} on return pickup verification.`);
+            console.log(`📦 [AUTO-RESTOCK] Restored ${qty} units to product ${pId} on ${isExchangeOrder ? 'exchange' : 'return'} pickup verification.`);
           }
         }
       } catch (stockErr) {
