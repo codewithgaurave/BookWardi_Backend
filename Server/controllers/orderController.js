@@ -1754,9 +1754,47 @@ export const createOrder = async (req, res) => {
       totalShipping = distinctCount * universalShippingFee;
     }
 
+    // Group items by unique seller to support individual multi-vendor sub-orders
+    const sellerGroupsMap = new Map();
+    for (const item of orderItems) {
+      const sKey = String(
+        item.sellerId?._id ||
+        item.sellerId ||
+        item.sellerDetails?.sellerId ||
+        item.storeName ||
+        item.sellerName ||
+        "default_seller"
+      ).trim();
+
+      if (!sellerGroupsMap.has(sKey)) {
+        sellerGroupsMap.set(sKey, {
+          sellerId: item.sellerId || item.sellerDetails?.sellerId || null,
+          sellerStoreName: item.storeName || item.sellerName || item.sellerDetails?.storeName || "",
+          sellerDetails: item.sellerDetails || null,
+          items: []
+        });
+      }
+      sellerGroupsMap.get(sKey).items.push(item);
+    }
+
+    const sellerGroups = Array.from(sellerGroupsMap.values());
+    const primarySeller = sellerGroups[0] || {};
+    const allSellerStoreNames = [
+      ...new Set(
+        sellerGroups
+          .map((g) => g.sellerStoreName)
+          .filter(Boolean)
+      )
+    ].join(", ");
+
+    // Check if any items have item-specific coupon/offer discounts
+    const anyItemHasSpecificDiscount = orderItems.some(
+      (it) => Number(it.offerDiscount || it.discount || 0) > 0
+    );
+
     // Attach dynamic Seller Settlement breakdown (Rules 1, 2, 3 & 4)
     const effectiveOrderTotal = Number(totalAmount || 0) || overallItemsSubtotal;
-    const customerState = req.body.shippingAddress?.state || newOrder?.shippingAddress?.state || "Uttar Pradesh";
+    const customerState = req.body.shippingAddress?.state || "Uttar Pradesh";
     for (const it of orderItems) {
       const itGross = Number(it.total) || Math.round(((Number(it.finalPrice || it.price || 0)) * (Number(it.quantity) || 1)) * 100) / 100;
       const itGstRate = Number(it.gstPercent ?? it.gstPercentage ?? it.gstRate ?? it.gst ?? (it.category?.toLowerCase()?.includes('book') ? 0 : 5));
@@ -1818,49 +1856,11 @@ export const createOrder = async (req, res) => {
       it.settlementRule = stl.ruleCode;
     }
 
-    // Group items by unique seller to support individual multi-vendor sub-orders
-    const sellerGroupsMap = new Map();
-    for (const item of orderItems) {
-      const sKey = String(
-        item.sellerId?._id ||
-        item.sellerId ||
-        item.sellerDetails?.sellerId ||
-        item.storeName ||
-        item.sellerName ||
-        "default_seller"
-      ).trim();
-
-      if (!sellerGroupsMap.has(sKey)) {
-        sellerGroupsMap.set(sKey, {
-          sellerId: item.sellerId || item.sellerDetails?.sellerId || null,
-          sellerStoreName: item.storeName || item.sellerName || item.sellerDetails?.storeName || "",
-          sellerDetails: item.sellerDetails || null,
-          items: []
-        });
-      }
-      sellerGroupsMap.get(sKey).items.push(item);
-    }
-
-    const sellerGroups = Array.from(sellerGroupsMap.values());
-
-    // Check if any items have item-specific coupon/offer discounts
-    const anyItemHasSpecificDiscount = orderItems.some(
-      (it) => Number(it.offerDiscount || it.discount || 0) > 0
-    );
-
     // =========================================================================
     // UNIFIED ORDER CREATION (Supports single-seller & multi-seller checkouts)
     // Both items remain in one unified order; Seller Panel automatically filters
     // items per seller scope via sellerOrderController.isItemBelongingToSellerScope.
     // =========================================================================
-    const primarySeller = sellerGroups[0] || {};
-    const allSellerStoreNames = [
-      ...new Set(
-        sellerGroups
-          .map((g) => g.sellerStoreName)
-          .filter(Boolean)
-      )
-    ].join(", ");
 
     const computedTax = req.body.taxAmount !== undefined
       ? Number(req.body.taxAmount) || 0
