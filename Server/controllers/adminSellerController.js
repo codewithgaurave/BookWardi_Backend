@@ -620,13 +620,22 @@ export const approveSellerUpdates = async (req, res) => {
     const updates = seller.pendingUpdates;
 
     // Apply pending updates to active seller profile
+    if (updates.name) seller.name = updates.name;
     if (updates.storeName) seller.storeName = updates.storeName;
     if (updates.phone) seller.phone = updates.phone;
     if (updates.email) seller.email = updates.email;
     if (updates.gstin !== undefined) seller.gstNumber = updates.gstin;
+    if (updates.gstNumber !== undefined) seller.gstNumber = updates.gstNumber;
     if (updates.warehouseAddress || updates.address) seller.address = updates.warehouseAddress || updates.address;
+    if (updates.addressDetails) seller.addressDetails = { ...(seller.addressDetails || {}), ...updates.addressDetails };
     if (updates.city) seller.city = updates.city;
+    if (updates.state) seller.state = updates.state;
     if (updates.pincode) seller.pincode = updates.pincode;
+    if (updates.bankDetails) seller.bankDetails = { ...(seller.bankDetails || {}), ...updates.bankDetails };
+    if (updates.documents) seller.documents = { ...(seller.documents || {}), ...updates.documents };
+    if (updates.avatar) seller.avatar = updates.avatar;
+    if (updates.yearStarted) seller.yearStarted = updates.yearStarted;
+    if (updates.location) seller.location = updates.location;
 
     if (updates.storeTagline) {
       if (!seller.storeDetails) seller.storeDetails = {};

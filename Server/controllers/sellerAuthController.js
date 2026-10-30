@@ -766,6 +766,40 @@ export const updateSellerProfile = async (req, res) => {
       };
     }
 
+    // If seller is already approved, ANY profile edit REQUIRES ADMIN APPROVAL!
+    if (seller.status === "approved") {
+      const requestedUpdates = {
+        ...updates,
+        submittedAt: new Date(),
+        previousData: {
+          storeName: seller.storeName || "",
+          sellerLegalName: seller.ownerDetails?.ownerFullName || seller.name || "",
+          phone: seller.phone || "",
+          email: seller.email || "",
+          address: seller.address || "",
+          city: seller.city || "",
+          state: seller.state || "",
+          pincode: seller.pincode || "",
+          gstin: seller.gstNumber || "",
+          bankDetails: seller.bankDetails || {},
+          documents: seller.documents || {}
+        }
+      };
+
+      seller.pendingUpdates = requestedUpdates;
+      seller.pendingUpdatesSubmittedAt = new Date();
+      seller.pendingUpdatesStatus = "pending_review";
+      await seller.save();
+
+      return res.json({
+        success: true,
+        requiresApproval: true,
+        message: "Aapki profile update request submit ho gayi hai aur approval ke liye Admin Portal par bhej di gayi hai. Admin verify karne ke baad ye changes live ho jayenge.",
+        pendingUpdates: requestedUpdates,
+        seller: await Seller.findById(seller._id).select("-password")
+      });
+    }
+
     const updatedSeller = await Seller.findByIdAndUpdate(req.user.id, updates, {
       new: true
     }).select("-password");
