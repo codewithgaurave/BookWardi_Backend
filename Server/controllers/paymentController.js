@@ -240,7 +240,9 @@ export const verifyPayment = async (req, res) => {
         {
           $set: {
             paymentStatus: "paid",
-            overallStatus: "processing",
+            overallStatus: "Confirmed",
+            status: "Confirmed",
+            "items.$[].status": "confirmed",
             razorpayPaymentId: razorpay_payment_id,
             razorpayOrderId: razorpay_order_id
           }
@@ -257,7 +259,7 @@ export const verifyPayment = async (req, res) => {
             masterOrderId: updatedOrder.masterOrderId,
             sellerId: updatedOrder.sellerId,
             total: updatedOrder.totalAmount,
-            status: "processing",
+            status: "Confirmed",
             paymentStatus: "paid"
           });
 

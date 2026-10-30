@@ -1568,6 +1568,9 @@ export const createOrder = async (req, res) => {
 
       const isCodOrder = paymentMethod && String(paymentMethod).toUpperCase().includes("COD");
       const initialPaymentStatus = req.body.paymentStatus || (req.body.razorpayPaymentId || req.body.isPaid ? "paid" : "pending");
+      const isOnlinePaid = !isCodOrder && (String(initialPaymentStatus).toLowerCase() === "paid" || Boolean(req.body.razorpayPaymentId) || Boolean(req.body.isPaid));
+      const initialOrderStatus = isOnlinePaid ? "Confirmed" : "Pending";
+      const initialItemStatus = isOnlinePaid ? "confirmed" : "pending";
 
       const rawDeliveryMode = req.body.deliveryMode || req.body.deliveryType || "";
       let topDeliveryMode = "pending_choice";
@@ -1584,7 +1587,7 @@ export const createOrder = async (req, res) => {
       ? String(req.body.deliveryOtp || req.body.selfDeliveryDetails?.deliveryOtp || Math.floor(1000 + Math.random() * 9000).toString())
       : "";
     for (const item of orderItems) {
-      item.status = "pending";
+      item.status = initialItemStatus;
       item.deliveryOtp = masterOtp;
       if (isInitialSelfDelivery && item.selfDeliveryDetails) {
         item.selfDeliveryDetails.deliveryOtp = masterOtp;
@@ -1982,8 +1985,26 @@ export const createOrder = async (req, res) => {
       paymentStatus: initialPaymentStatus,
       razorpayOrderId: req.body.razorpayOrderId || "",
       razorpayPaymentId: req.body.razorpayPaymentId || "",
-      overallStatus: "Pending",
-      status: "Pending",
+      overallStatus: initialOrderStatus,
+      status: initialOrderStatus,
+      timeline: isOnlinePaid
+        ? [
+            {
+              status: "placed",
+              title: "Order Placed",
+              description: "Your order has been received.",
+              timestamp: new Date(),
+              updatedBy: "System"
+            },
+            {
+              status: "confirmed",
+              title: "Payment Received & Order Confirmed",
+              description: `Online payment of ₹${finalTotalAmount} verified successfully. Order automatically confirmed.`,
+              timestamp: new Date(),
+              updatedBy: "System"
+            }
+          ]
+        : undefined,
       deliveryMode: topDeliveryMode,
       courierName: topDeliveryMode === "self_delivery" ? "" : (req.body.courierName || ""),
       trackingNumber: topDeliveryMode === "self_delivery" ? (req.body.selfDeliveryDetails?.deliveryPartnerToken || "") : (trackingNumber || ""),
