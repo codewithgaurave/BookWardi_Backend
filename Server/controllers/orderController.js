@@ -4257,12 +4257,9 @@ export const updateReturnExchangeStatus = async (req, res) => {
     } else if (rawStatus === "exchange_dispatched") {
       canonicalReturnStatus = "exchange_dispatched";
       overallStatus = "exchange_dispatched";
-      title = "Replacement Exchange Unit Dispatched";
-      description = description || `Replacement item dispatched via ${exchangeCourier || "Courier"} (AWB: ${exchangeAwb || "N/A"}).`;
-      if (exchangeAwb) {
-        order.trackingNumber = exchangeAwb;
-        order.courierName = exchangeCourier || order.courierName || "Shiprocket";
-      }
+
+      const isSelf = req.body.deliveryMode === "self_delivery" || Boolean(req.body.selfDeliveryDetails?.deliveryPersonName);
+      let effectiveSelf = null;
 
       // Ensure active Exchange Delivery OTP is live with 24 hours window and dispatched via SMS
       const existingOtp = String(order.deliveryOtp || order.selfDeliveryDetails?.deliveryOtp || "").trim();
@@ -4270,24 +4267,62 @@ export const updateReturnExchangeStatus = async (req, res) => {
       const now = new Date();
       const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24-hour live OTP validity
 
+      if (isSelf && req.body.selfDeliveryDetails) {
+        const clientAppUrl = (process.env.CLIENT_URL || process.env.FRONTEND_BASE_URL || "http://localhost:5173").replace(/\/+$/, '');
+        const tokenVal = String(req.body.selfDeliveryDetails.deliveryPartnerToken || req.body.exchangeAwbNumber || `DLV-${Math.floor(100000 + Math.random() * 900000)}`).trim();
+        const trackingLink = `${clientAppUrl}/#delivery-partner?token=${encodeURIComponent(tokenVal)}`;
+        
+        effectiveSelf = {
+          ...req.body.selfDeliveryDetails,
+          deliveryPartnerToken: tokenVal,
+          trackingUrl: trackingLink,
+          deliveryOtp: activeOtp,
+          otpLastSentAt: now,
+          otpExpiresAt: expiresAt
+        };
+
+        order.deliveryMode = "self_delivery";
+        order.deliveryType = "self_delivery";
+        order.courierName = "";
+        order.carrier = "";
+        order.trackingNumber = tokenVal;
+        order.trackingUrl = trackingLink;
+        order.selfDeliveryDetails = effectiveSelf;
+        title = "Replacement Exchange Unit Dispatched via Rider";
+        description = description || `Replacement item dispatched via Store Rider (${effectiveSelf.deliveryPersonName} - ${effectiveSelf.deliveryPersonPhone}). 4-digit Exchange OTP sent to customer.`;
+
+        // Automated WhatsApp to delivery boy
+        sendDeliveryPartnerWhatsAppDispatch({
+          order,
+          selfDeliveryDetails: effectiveSelf,
+          clientAppUrl
+        }).catch(() => {});
+      } else {
+        order.deliveryMode = "third_party";
+        order.deliveryType = "third_party";
+        title = "Replacement Exchange Unit Dispatched";
+        description = description || `Replacement item dispatched via ${exchangeCourier || "Courier"} (AWB: ${exchangeAwb || "N/A"}).`;
+        if (exchangeAwb) {
+          order.trackingNumber = exchangeAwb;
+          order.courierName = exchangeCourier || order.courierName || "Shiprocket";
+          order.trackingUrl = `https://shiprocket.co/tracking/${exchangeAwb}`;
+        }
+      }
+
       order.deliveryOtp = activeOtp;
-      if (!order.selfDeliveryDetails) order.selfDeliveryDetails = {};
+      if (!order.selfDeliveryDetails) order.selfDeliveryDetails = effectiveSelf || {};
       order.selfDeliveryDetails.deliveryOtp = activeOtp;
       order.selfDeliveryDetails.otpLastSentAt = now;
       order.selfDeliveryDetails.otpExpiresAt = expiresAt;
       if (targetItem) {
         targetItem.deliveryOtp = activeOtp;
-        if (!targetItem.selfDeliveryDetails) targetItem.selfDeliveryDetails = {};
-        targetItem.selfDeliveryDetails.deliveryOtp = activeOtp;
-        targetItem.selfDeliveryDetails.otpLastSentAt = now;
-        targetItem.selfDeliveryDetails.otpExpiresAt = expiresAt;
+        targetItem.deliveryType = isSelf ? "self_delivery" : "third_party";
+        if (effectiveSelf) targetItem.selfDeliveryDetails = effectiveSelf;
       } else if (Array.isArray(order.items)) {
         order.items.forEach(it => {
           it.deliveryOtp = activeOtp;
-          if (!it.selfDeliveryDetails) it.selfDeliveryDetails = {};
-          it.selfDeliveryDetails.deliveryOtp = activeOtp;
-          it.selfDeliveryDetails.otpLastSentAt = now;
-          it.selfDeliveryDetails.otpExpiresAt = expiresAt;
+          it.deliveryType = isSelf ? "self_delivery" : "third_party";
+          if (effectiveSelf) it.selfDeliveryDetails = effectiveSelf;
         });
       }
 
