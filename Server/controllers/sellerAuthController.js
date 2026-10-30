@@ -770,6 +770,24 @@ export const updateSellerProfile = async (req, res) => {
       new: true
     }).select("-password");
 
+    // Re-sync Shiprocket pickup address if address-related fields changed
+    const addressChanged = finalAddress || city || state || pincode;
+    if (addressChanged && updatedSeller?.status === "approved") {
+      try {
+        const { registerSellerPickupAddress } = await import("../services/shiprocketService.js");
+        const srResult = await registerSellerPickupAddress(updatedSeller);
+        if (srResult.success) {
+          await Seller.findByIdAndUpdate(req.user.id, {
+            shiprocketPickupLocation: srResult.pickupLocationName,
+            shiprocketPickupRegisteredAt: new Date()
+          });
+          updatedSeller.shiprocketPickupLocation = srResult.pickupLocationName;
+        }
+      } catch (srErr) {
+        console.warn("⚠️ [SHIPROCKET] Pickup re-sync failed on profile update:", srErr.message);
+      }
+    }
+
     // Also synchronize user.sellerStatus if status was changed to pending
     if (updates.status === "pending") {
       try {
@@ -803,7 +821,6 @@ export const updateSellerProfile = async (req, res) => {
     const responseMessage = updates.status === "pending"
       ? "Bank account / KYC details updated! Your account is now pending Admin approval before payout settlements are activated."
       : "Profile updated successfully";
-
     res.json({
       success: true,
       message: responseMessage,

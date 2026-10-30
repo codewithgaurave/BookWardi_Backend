@@ -191,6 +191,16 @@ const sellerSchema = new mongoose.Schema(
       }
     },
 
+    // Shiprocket Integration
+    shiprocketPickupLocation: {
+      type: String,
+      default: ""
+    },
+    shiprocketPickupRegisteredAt: {
+      type: Date,
+      default: null
+    },
+
     // Financials, Wallet & Commission
     commissionPercentage: {
       type: Number,

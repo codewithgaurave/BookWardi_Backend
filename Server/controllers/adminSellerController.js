@@ -5,6 +5,7 @@ import Order from "../models/Order.js";
 import Product from "../models/Product.js";
 import { generateSellerFinancialStatementPDF } from "../services/invoiceService.js";
 import { calculateSellerSettlement, reconcileSellerSettlementBalances } from "../services/settlementService.js";
+import { registerSellerPickupAddress } from "../services/shiprocketService.js";
 
 // Helper: Safely find seller by MongoDB ObjectId or fallback to email / phone / storeName
 const findSellerByIdOrQuery = async (id, selectFields = "") => {
@@ -123,6 +124,22 @@ export const approveSeller = async (req, res) => {
     }
 
     await seller.save();
+
+    // Auto-register seller's pickup address on Shiprocket after approval
+    if (!seller.shiprocketPickupLocation) {
+      try {
+        const srResult = await registerSellerPickupAddress(seller);
+        if (srResult.success) {
+          await Seller.findByIdAndUpdate(seller._id, {
+            shiprocketPickupLocation: srResult.pickupLocationName,
+            shiprocketPickupRegisteredAt: new Date()
+          });
+          console.log(`✅ [SHIPROCKET] Pickup registered for seller '${seller.storeName}': "${srResult.pickupLocationName}"`);
+        }
+      } catch (srErr) {
+        console.warn(`⚠️ [SHIPROCKET] Pickup registration failed for seller '${seller.storeName}':`, srErr.message);
+      }
+    }
 
     // Also update corresponding User document in DB if exists
     const userConditions = [{ _id: seller._id }];

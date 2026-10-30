@@ -10,6 +10,7 @@ import Cart from "../models/Cart.js";
 import mongoose from "mongoose";
 import { sendDeliveryPartnerWhatsAppDispatch } from "../services/whatsappService.js";
 import { broadcastRealtimeEvent } from "../services/realtimeService.js";
+import { createShiprocketOrder, assignShiprocketAwb, generateShiprocketPickup } from "../services/shiprocketService.js";
 import { calculateSellerSettlement, calculateSettlementMaturity, reconcileSellerSettlementBalances, isGstExempted } from "../services/settlementService.js";
 import { 
   sendFast2SmsOrderPlaced,
@@ -1738,6 +1739,7 @@ export const createOrder = async (req, res) => {
       console.warn("⚠️ Error fetching global settings for order creation:", e.message);
     }
 
+
     const overallItemsSubtotal = orderItems.reduce(
       (sum, it) => sum + (Number(it.finalPrice || it.price || 0) * Number(it.quantity || 1)),
       0
@@ -2673,6 +2675,7 @@ export const updateOrder = async (req, res) => {
                 customerState: existingOrder.shippingAddress?.state || "Uttar Pradesh",
                 gstRate: itemGstRate,
                 category: item.category || "",
+                name: item.name || item.productName || "",
                 deliveryCharge: Number(existingOrder.shippingFee ?? existingOrder.shippingCost ?? existingOrder.shippingAmount ?? existingOrder.deliveryCharge ?? 49),
                 shippingFee: Number(existingOrder.shippingFee ?? existingOrder.shippingCost ?? existingOrder.shippingAmount ?? 0),
                 shippingCost: Number(existingOrder.shippingFee ?? existingOrder.shippingCost ?? existingOrder.shippingAmount ?? 0),
@@ -2808,6 +2811,47 @@ export const updateOrder = async (req, res) => {
       }
     }
 
+    // ─── Auto Shiprocket Shipment Creation ──────────────────────────────────
+    let shiprocketResult = null;
+    if (req.body.createShipment === true && !existingOrder.shiprocketOrderId) {
+      try {
+        const weightKg = Number(req.body.weightKg) || 1;
+        const srOrder = await createShiprocketOrder(existingOrder, weightKg);
+        if (srOrder.success) {
+          const awbResult = await assignShiprocketAwb(srOrder.shipmentId);
+          if (awbResult.success) {
+            existingOrder.shiprocketOrderId = srOrder.shiprocketOrderId;
+            existingOrder.shiprocketShipmentId = srOrder.shipmentId;
+            existingOrder.trackingNumber = awbResult.awbCode;
+            existingOrder.courierName = awbResult.courierName || req.body.courierCode || 'Shiprocket';
+            existingOrder.trackingUrl = `https://track.shiprocket.in/tracking/${awbResult.awbCode}`;
+            existingOrder.deliveryMode = 'third_party';
+            if (Array.isArray(existingOrder.items)) {
+              existingOrder.items.forEach(item => {
+                item.deliveryType = 'third_party';
+                item.thirdPartyDetails = {
+                  ...item.thirdPartyDetails,
+                  courierName: awbResult.courierName || 'Shiprocket',
+                  trackingNumber: awbResult.awbCode,
+                  trackingUrl: `https://track.shiprocket.in/tracking/${awbResult.awbCode}`
+                };
+              });
+            }
+            generateShiprocketPickup(srOrder.shipmentId).catch(() => {});
+            shiprocketResult = { success: true, awbCode: awbResult.awbCode, courierName: awbResult.courierName, shiprocketOrderId: srOrder.shiprocketOrderId };
+            console.log(`✅ [SHIPROCKET] Shipment created for Order ${existingOrder.orderId}: AWB ${awbResult.awbCode}`);
+          } else {
+            shiprocketResult = { success: false, error: 'AWB assignment failed' };
+          }
+        } else {
+          shiprocketResult = { success: false, error: 'Shiprocket order creation failed' };
+        }
+      } catch (srErr) {
+        console.error('❌ [SHIPROCKET] Shipment creation error:', srErr.message);
+        shiprocketResult = { success: false, error: srErr.message };
+      }
+    }
+
     let whatsappDispatchResult = null;
     if (req.body.selfDeliveryDetails && req.body.selfDeliveryDetails.deliveryPersonPhone) {
       whatsappDispatchResult = await sendDeliveryPartnerWhatsAppDispatch({
@@ -2847,6 +2891,7 @@ export const updateOrder = async (req, res) => {
     }
 
     // Dynamically recalculate and synchronize settlementRule across order and items based on resolved paymentMethod and deliveryMode
+
     const isCod = String(existingOrder.paymentMethod || "").toUpperCase().includes("COD");
     const dynamicSettlementRule = isCod
       ? (isExplicitThirdParty ? "COD_THIRD_PARTY_DELIVERY" : "COD_SELF_DELIVERY")
@@ -2944,7 +2989,7 @@ export const updateOrder = async (req, res) => {
       console.warn("⚠️ Realtime broadcast error (updateOrder):", rtErr.message);
     }
 
-    res.json({ success: true, message: "Order updated successfully", order: existingOrder, whatsappDispatch: whatsappDispatchResult });
+    res.json({ success: true, message: "Order updated successfully", order: existingOrder, whatsappDispatch: whatsappDispatchResult, shiprocket: shiprocketResult });
   } catch (error) {
     res.status(400).json({ message: "Failed to update order", error: error.message });
   }

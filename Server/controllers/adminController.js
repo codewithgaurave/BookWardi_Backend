@@ -1275,7 +1275,6 @@ export const updatePlatformSettings = async (req, res) => {
     } catch (sseErr) {
       console.warn("Settings SSE broadcast error:", sseErr.message);
     }
-
     res.json({ message: "Platform settings updated successfully", settings });
   } catch (error) {
     res.status(500).json({ message: "Failed to update settings", error: error.message });

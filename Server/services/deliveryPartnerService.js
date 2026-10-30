@@ -1,7 +1,16 @@
 import DeliveryPartnerConfig from "../models/DeliveryPartnerConfig.js";
 import Order, { generateProductOrderId } from "../models/Order.js";
+import {
+  checkShiprocketServiceability,
+  createShiprocketOrder,
+  assignShiprocketAwb,
+  generateShiprocketPickup,
+  trackShiprocketAwb,
+  cancelShiprocketOrder,
+  getShiprocketLabel
+} from "./shiprocketService.js";
 
-// Helper to get or initialize logistics configuration
+// ─── Helper: Get or initialize delivery config ───────────────────────────────
 export const getOrInitDeliveryConfig = async () => {
   let config = await DeliveryPartnerConfig.findOne();
   if (!config) {
@@ -16,10 +25,10 @@ export const getOrInitDeliveryConfig = async () => {
           code: "SHIPROCKET",
           active: true,
           isDefault: true,
-          avgDays: "2-3 Days",
+          avgDays: "2-4 Business Days",
           baseRate: 45,
           perKgRate: 20,
-          sandboxMode: true
+          sandboxMode: false
         },
         {
           partnerId: "delhivery",
@@ -30,7 +39,7 @@ export const getOrInitDeliveryConfig = async () => {
           avgDays: "1-3 Days",
           baseRate: 50,
           perKgRate: 25,
-          sandboxMode: true
+          sandboxMode: false
         },
         {
           partnerId: "bluedart",
@@ -41,7 +50,7 @@ export const getOrInitDeliveryConfig = async () => {
           avgDays: "1-2 Days",
           baseRate: 75,
           perKgRate: 35,
-          sandboxMode: true
+          sandboxMode: false
         },
         {
           partnerId: "local_express",
@@ -52,7 +61,7 @@ export const getOrInitDeliveryConfig = async () => {
           avgDays: "Same Day / 24 hrs",
           baseRate: 30,
           perKgRate: 15,
-          sandboxMode: true
+          sandboxMode: false
         }
       ]
     });
@@ -61,17 +70,36 @@ export const getOrInitDeliveryConfig = async () => {
   return config;
 };
 
-// 1. Serviceability & Courier Rate Calculation API
-export const checkServiceabilityService = async ({ pickupPincode = "226001", deliveryPincode, weightKg = 1, isCod = false }) => {
-  const config = await getOrInitDeliveryConfig();
-  const dest = String(deliveryPincode || "110001").trim();
+// ─── 1. Serviceability & Courier Rate Check ──────────────────────────────────
+export const checkServiceabilityService = async ({ pickupPincode, deliveryPincode, weightKg = 1, isCod = false, codAmount = 0 }) => {
+  const pickup = String(pickupPincode || process.env.SHIPROCKET_PICKUP_PINCODE || "226001");
+  const delivery = String(deliveryPincode || "110001").trim();
   const weight = Math.max(0.5, Number(weightKg) || 1);
 
-  // Region tier logic for rate estimation
-  const isMetro = dest.startsWith("11") || dest.startsWith("40") || dest.startsWith("56") || dest.startsWith("70") || dest.startsWith("60") || dest.startsWith("50");
-  const isLocalState = dest.startsWith("22") || dest.startsWith("20") || dest.startsWith("26");
+  // Try real Shiprocket serviceability first
+  try {
+    const result = await checkShiprocketServiceability({
+      pickupPincode: pickup,
+      deliveryPincode: delivery,
+      weightKg: weight,
+      isCod,
+      codAmount
+    });
 
-  const results = config.partners.map((partner) => {
+    if (result.success && result.availablePartners?.length > 0) {
+      console.log(`✅ [SHIPROCKET] Serviceability: ${result.availablePartners.length} couriers available for ${pickup} → ${delivery}`);
+      return result;
+    }
+  } catch (err) {
+    console.warn("⚠️ [SHIPROCKET] Serviceability API failed, using local fallback:", err.message);
+  }
+
+  // Fallback: local rate estimation if Shiprocket API fails
+  const config = await getOrInitDeliveryConfig();
+  const isMetro = ["11", "40", "56", "70", "60", "50"].some((p) => delivery.startsWith(p));
+  const isLocalState = ["22", "20", "26"].some((p) => delivery.startsWith(p));
+
+  const partners = config.partners.map((partner) => {
     let multiplier = isLocalState ? 1.0 : isMetro ? 1.25 : 1.5;
     if (partner.code === "BLUEDART") multiplier *= 1.3;
     if (partner.code === "LOCAL_EXPRESS") multiplier = isLocalState ? 0.8 : 2.0;
@@ -79,15 +107,13 @@ export const checkServiceabilityService = async ({ pickupPincode = "226001", del
     const baseCost = partner.baseRate * multiplier;
     const additionalWeightCost = Math.max(0, weight - 1) * partner.perKgRate;
     const codCharge = isCod ? config.baseCodFee : 0;
-    const calculatedRate = Math.round(baseCost + additionalWeightCost + codCharge);
+    const estimatedRate = Math.round(baseCost + additionalWeightCost + codCharge);
 
-    const slaDays = partner.code === "LOCAL_EXPRESS"
-      ? (isLocalState ? "Same Day (Within 24 hrs)" : "2-3 Days")
-      : partner.code === "BLUEDART"
-      ? (isMetro ? "1-2 Business Days" : "2 Days")
-      : partner.code === "DELHIVERY"
-      ? "2-3 Business Days"
-      : "2-4 Business Days";
+    const estimatedDays =
+      partner.code === "LOCAL_EXPRESS" ? (isLocalState ? "Same Day (Within 24 hrs)" : "2-3 Days") :
+      partner.code === "BLUEDART" ? (isMetro ? "1-2 Business Days" : "2 Days") :
+      partner.code === "DELHIVERY" ? "2-3 Business Days" :
+      "2-4 Business Days";
 
     return {
       partnerId: partner.partnerId,
@@ -96,81 +122,138 @@ export const checkServiceabilityService = async ({ pickupPincode = "226001", del
       active: partner.active,
       isDefault: partner.isDefault,
       serviceable: partner.active,
-      estimatedRate: calculatedRate,
-      estimatedDays: slaDays,
+      estimatedRate,
+      estimatedDays,
       codAvailable: true,
-      pickupPincode,
-      deliveryPincode: dest
+      pickupPincode: pickup,
+      deliveryPincode: delivery
     };
   });
 
   return {
     success: true,
-    pickupPincode,
-    deliveryPincode: dest,
+    pickupPincode: pickup,
+    deliveryPincode: delivery,
     weightKg: weight,
-    recommendedPartner: results.find((r) => r.isDefault) || results[0],
-    availablePartners: results.filter((r) => r.active)
+    recommendedPartner: partners.find((p) => p.isDefault) || partners[0],
+    availablePartners: partners.filter((p) => p.active)
   };
 };
 
-// 2. Automated AWB Generation & Shipment Dispatch Service
-export const generateShipmentAwbService = async (orderData, courierCode = "SHIPROCKET", weightKg = 1, dimensions = {}) => {
-  const config = await getOrInitDeliveryConfig();
-  const selectedPartner = config.partners.find((p) => p.code === courierCode || p.partnerId === courierCode) || config.partners[0];
-
+// ─── 2. Create Shipment — Real Shiprocket AWB Generation ─────────────────────
+export const generateShipmentAwbService = async (orderData, courierCode = "SHIPROCKET", weightKg = 1, dimensions = {}, courierId = null) => {
   const orderId = orderData.orderId || orderData.id || generateProductOrderId();
-  const cleanCode = selectedPartner.code;
-  const uniqueAwb = `${cleanCode.slice(0, 3)}-${Date.now().toString().slice(-6)}${Math.floor(10 + Math.random() * 90)}`;
-  const pickupToken = `PKP-${Math.floor(100000 + Math.random() * 900000)}`;
-  const shippingLabelUrl = `/invoices/shipping-label-${uniqueAwb}.pdf`;
 
-  const weight = Number(weightKg) || 1;
+  // ── Resolve seller's Shiprocket pickup location ───────────────────────────
+  // Priority: seller's registered pickup location → default warehouse
+  let sellerPickupLocation = process.env.SHIPROCKET_PICKUP_LOCATION || "warehouse";
 
-  const shipmentData = {
-    awbNumber: uniqueAwb,
-    courierPartnerId: selectedPartner.partnerId,
-    courierPartnerName: selectedPartner.name,
-    courierPartnerCode: selectedPartner.code,
-    shippingLabelUrl,
-    manifestUrl: `/invoices/manifest-${uniqueAwb}.pdf`,
-    pickupToken,
-    status: "booked",
-    weightKg: weight,
-    dimensions: {
-      length: Number(dimensions.length) || 20,
-      width: Number(dimensions.width) || 15,
-      height: Number(dimensions.height) || 10
-    },
-    pickupScheduledDate: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
-    estimatedDeliveryDate: new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString(),
-    courierLogs: [
-      {
-        title: "Shipment Created & AWB Generated",
-        description: `AWB ${uniqueAwb} assigned via ${selectedPartner.name}`,
-        location: "Seller Warehouse",
-        timestamp: new Date().toISOString(),
-        updatedBy: "System Logistics"
-      },
-      {
-        title: "Courier Pickup Manifest Scheduled",
-        description: `Pickup Token ${pickupToken} generated for courier agent dispatch`,
-        location: "Seller Warehouse",
-        timestamp: new Date(Date.now() + 10 * 60 * 1000).toISOString(),
-        updatedBy: selectedPartner.name
+  try {
+    // Try to get seller's pickup location from DB
+    const Seller = (await import("../models/Seller.js")).default;
+    const sellerIdRaw = orderData.sellerId ||
+      orderData.sellerDetails?.sellerId ||
+      orderData.items?.[0]?.sellerId?._id ||
+      orderData.items?.[0]?.sellerId ||
+      orderData.items?.[0]?.sellerDetails?.sellerId;
+
+    if (sellerIdRaw) {
+      const seller = await Seller.findById(sellerIdRaw).select("shiprocketPickupLocation storeName pincode").lean();
+      if (seller?.shiprocketPickupLocation) {
+        sellerPickupLocation = seller.shiprocketPickupLocation;
+        console.log(`✅ [SHIPROCKET] Using seller pickup location: "${sellerPickupLocation}" for order ${orderId}`);
+      } else {
+        console.log(`⚠️ [SHIPROCKET] Seller has no pickup location registered, using default: "${sellerPickupLocation}"`);
       }
-    ]
-  };
+    }
+  } catch (err) {
+    console.warn("⚠️ [SHIPROCKET] Could not resolve seller pickup location, using default:", err.message);
+  }
 
-  return {
-    success: true,
-    message: `Shipment booked successfully! AWB ${uniqueAwb} assigned via ${selectedPartner.name}`,
-    orderId,
-    shipment: shipmentData
-  };
+  // Inject resolved pickup location into order data for createShiprocketOrder
+  const orderWithPickup = { ...orderData, _resolvedPickupLocation: sellerPickupLocation };
+
+  // ── Real Shiprocket Flow ──────────────────────────────────────────────────
+  try {
+    // Step 1: Create order on Shiprocket
+    const srOrder = await createShiprocketOrder(orderWithPickup, weightKg, dimensions);
+
+    if (!srOrder.success || !srOrder.shipmentId) {
+      throw new Error("Shiprocket order creation did not return a shipment ID");
+    }
+
+    // Step 2: Assign AWB
+    const awbResult = await assignShiprocketAwb(srOrder.shipmentId, courierId);
+
+    if (!awbResult.success || !awbResult.awbCode) {
+      throw new Error("AWB assignment failed after order creation");
+    }
+
+    // Step 3: Generate pickup request (non-fatal if fails)
+    const pickupResult = await generateShiprocketPickup(srOrder.shipmentId);
+
+    // Step 4: Try to get shipping label URL
+    const labelResult = await getShiprocketLabel(srOrder.shipmentId);
+
+    const shipmentData = {
+      awbNumber: awbResult.awbCode,
+      shiprocketOrderId: srOrder.shiprocketOrderId,
+      shiprocketShipmentId: srOrder.shipmentId,
+      courierPartnerId: awbResult.courierId || "shiprocket",
+      courierPartnerName: awbResult.courierName || "Shiprocket",
+      courierPartnerCode: awbResult.courierName?.toUpperCase().replace(/\s+/g, "_") || "SHIPROCKET",
+      shippingLabelUrl: labelResult.labelUrl || "",
+      manifestUrl: "",
+      pickupToken: `PKP-${srOrder.shipmentId}`,
+      pickupLocation: sellerPickupLocation,
+      status: "booked",
+      weightKg: Number(weightKg) || 1,
+      dimensions: {
+        length: Number(dimensions.length) || 20,
+        width: Number(dimensions.width) || 15,
+        height: Number(dimensions.height) || 10
+      },
+      pickupScheduledDate: pickupResult.pickupScheduledDate,
+      estimatedDeliveryDate: new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString(),
+      trackingUrl: `https://track.shiprocket.in/tracking/${awbResult.awbCode}`,
+      courierLogs: [
+        {
+          title: "Shiprocket Order Created",
+          description: `SR Order ID: ${srOrder.shiprocketOrderId} | Shipment ID: ${srOrder.shipmentId} | Pickup: ${sellerPickupLocation}`,
+          location: sellerPickupLocation,
+          timestamp: new Date().toISOString(),
+          updatedBy: "Shiprocket API"
+        },
+        {
+          title: `AWB ${awbResult.awbCode} Assigned`,
+          description: `Courier: ${awbResult.courierName}`,
+          location: sellerPickupLocation,
+          timestamp: new Date().toISOString(),
+          updatedBy: "Shiprocket API"
+        },
+        {
+          title: "Pickup Request Generated",
+          description: pickupResult.message,
+          location: sellerPickupLocation,
+          timestamp: new Date().toISOString(),
+          updatedBy: "Shiprocket API"
+        }
+      ]
+    };
+
+    return {
+      success: true,
+      message: `Shipment booked via Shiprocket! AWB ${awbResult.awbCode} assigned via ${awbResult.courierName}. Pickup from: ${sellerPickupLocation}`,
+      orderId,
+      shipment: shipmentData
+    };
+  } catch (err) {
+    console.error("❌ [SHIPROCKET] Full shipment flow failed:", err.message);
+    throw new Error(`Shiprocket shipment creation failed: ${err.message}`);
+  }
 };
 
-// 3. Live AWB Tracking Checkpoints Engine
+// ─── 3. Live AWB Tracking ────────────────────────────────────────────────────
 export const getLiveAwbTrackingService = async (awbNumber) => {
   if (!awbNumber) {
     return { success: false, message: "AWB number is required for tracking." };
@@ -179,7 +262,7 @@ export const getLiveAwbTrackingService = async (awbNumber) => {
   const cleanAwb = String(awbNumber).trim();
   const upperAwb = cleanAwb.toUpperCase();
 
-  // Try to find matching Order in MongoDB
+  // First try to find order in DB
   let matchedOrder = null;
   try {
     matchedOrder = await Order.findOne({
@@ -195,36 +278,47 @@ export const getLiveAwbTrackingService = async (awbNumber) => {
     }).populate("items.sellerId", "storeName name phone email address city");
   } catch (err) {}
 
+  // Try real Shiprocket tracking
+  try {
+    const trackResult = await trackShiprocketAwb(cleanAwb);
+
+    if (trackResult.success) {
+      return {
+        success: true,
+        awbNumber: cleanAwb,
+        orderId: matchedOrder?.orderId || matchedOrder?.id || null,
+        deliveryMode: "third_party",
+        courierPartnerName: trackResult.courierName || "Shiprocket",
+        currentStatus: trackResult.currentStatus || "shipped",
+        currentStatusLabel: trackResult.currentStatusLabel || "",
+        estimatedDeliveryDate: trackResult.estimatedDeliveryDate || new Date(Date.now() + 2 * 24 * 60 * 60 * 1000).toISOString(),
+        trackingUrl: `https://track.shiprocket.in/tracking/${cleanAwb}`,
+        sellerDetails: matchedOrder?.sellerDetails || null,
+        checkpoints: trackResult.checkpoints
+      };
+    }
+  } catch (err) {
+    console.warn("⚠️ [SHIPROCKET] Live tracking failed, falling back to DB data:", err.message);
+  }
+
+  // Fallback: use DB order timeline if Shiprocket tracking fails
   if (matchedOrder) {
     const isSelf = matchedOrder.deliveryMode === "self_delivery" || Boolean(matchedOrder.selfDeliveryDetails?.deliveryPartnerToken);
     const courier = matchedOrder.courierName || "Courier Partner";
-    let realTrackingUrl = matchedOrder.trackingUrl || "";
 
-    if (!realTrackingUrl) {
-      if (isSelf) {
-        realTrackingUrl = matchedOrder.selfDeliveryDetails?.trackingUrl || `/#delivery-partner?token=${encodeURIComponent(matchedOrder.selfDeliveryDetails?.deliveryPartnerToken || cleanAwb)}`;
-      } else {
-        const cLower = courier.toLowerCase();
-        if (cLower.includes("delhivery")) realTrackingUrl = `https://www.delhivery.com/track/package/${cleanAwb}`;
-        else if (cLower.includes("bluedart") || cLower.includes("blue dart")) realTrackingUrl = `https://www.bluedart.com/tracking?awb=${cleanAwb}`;
-        else if (cLower.includes("dtdc")) realTrackingUrl = `https://www.dtdc.in/tracking/shipment-tracking.asp?awb=${cleanAwb}`;
-        else if (cLower.includes("ekart")) realTrackingUrl = `https://ekartlogistics.com/shipmenttrack/${cleanAwb}`;
-        else if (cLower.includes("indiapost") || cLower.includes("speedpost")) realTrackingUrl = `https://www.indiapost.gov.in/_layouts/15/dpt.cept.tracking/trackconsignment.aspx`;
-        else realTrackingUrl = `https://track.shiprocket.in/tracking/${cleanAwb}`;
-      }
-    }
+    let trackingUrl = matchedOrder.trackingUrl || `https://track.shiprocket.in/tracking/${cleanAwb}`;
 
-    const checkpoints = (matchedOrder.timeline && matchedOrder.timeline.length > 0)
+    const checkpoints = (matchedOrder.timeline?.length > 0)
       ? matchedOrder.timeline.map((evt) => ({
           status: evt.status,
           title: evt.title,
           description: evt.description,
-          location: evt.location || (isSelf ? (matchedOrder.sellerDetails?.storeName || "Store Dispatch") : "Regional Hub"),
+          location: evt.location || "Hub",
           timestamp: evt.timestamp
         }))
       : [
-          { status: "placed", title: "Order Placed", description: "Order received and confirmed", location: "Store Hub", timestamp: matchedOrder.createdAt || new Date().toISOString() },
-          { status: "processing", title: "Processing & Packed", description: "Satchel sealed ready for dispatch", location: matchedOrder.sellerDetails?.storeName || "Merchant Store", timestamp: new Date(Date.now() - 4 * 60 * 60 * 1000).toISOString() }
+          { status: "placed", title: "Order Placed", description: "Order received and confirmed", location: "BookVardi Hub", timestamp: matchedOrder.createdAt },
+          { status: "shipped", title: "Dispatched", description: "Package handed to courier", location: "Seller Warehouse", timestamp: new Date().toISOString() }
         ];
 
     return {
@@ -232,80 +326,24 @@ export const getLiveAwbTrackingService = async (awbNumber) => {
       awbNumber: cleanAwb,
       orderId: matchedOrder.orderId || matchedOrder.id,
       deliveryMode: isSelf ? "self_delivery" : "third_party",
-      courierPartnerName: isSelf ? (matchedOrder.sellerDetails?.storeName ? `${matchedOrder.sellerDetails.storeName} Self-Delivery` : "Direct Store Self-Delivery") : courier,
+      courierPartnerName: isSelf ? "BookVardi Self-Delivery" : courier,
       currentStatus: matchedOrder.overallStatus || matchedOrder.status || "shipped",
       estimatedDeliveryDate: matchedOrder.estimatedDeliveryDate || new Date(Date.now() + 2 * 24 * 60 * 60 * 1000).toISOString(),
-      trackingUrl: realTrackingUrl,
+      trackingUrl,
       sellerDetails: matchedOrder.sellerDetails || null,
       selfDeliveryDetails: matchedOrder.selfDeliveryDetails || null,
       checkpoints
     };
   }
 
-  // Fallback for simulation / mock AWB
-  const courierPrefix = upperAwb.split("-")[0] || "SHIP";
-  const partnerNameMap = {
-    DELH: "Delhivery Direct Express",
-    BLUE: "BlueDart Air Priority",
-    DTDC: "DTDC Express Courier",
-    EKAR: "Ekart Logistics",
-    POST: "India Post SpeedPost",
-    LOCA: "BookVardi Local Express"
-  };
-
-  const partnerName = partnerNameMap[courierPrefix] || "Express Courier Network";
-  let fallbackUrl = `https://track.shiprocket.in/tracking/${cleanAwb}`;
-  if (courierPrefix === "DELH") fallbackUrl = `https://www.delhivery.com/track/package/${cleanAwb}`;
-  else if (courierPrefix === "BLUE") fallbackUrl = `https://www.bluedart.com/tracking?awb=${cleanAwb}`;
-  else if (courierPrefix === "DTDC") fallbackUrl = `https://www.dtdc.in/tracking/shipment-tracking.asp?awb=${cleanAwb}`;
-  else if (courierPrefix === "EKAR") fallbackUrl = `https://ekartlogistics.com/shipmenttrack/${cleanAwb}`;
-
-  const checkpoints = [
-    {
-      status: "placed",
-      title: "Order Placed & Confirmed",
-      description: "Customer order confirmed by marketplace",
-      location: "BookVardi Hub",
-      timestamp: new Date(Date.now() - 36 * 60 * 60 * 1000).toISOString()
-    },
-    {
-      status: "packed",
-      title: "Items Packed & Manifested",
-      description: "Packed into protective security satchel",
-      location: "Seller Fulfillment Warehouse",
-      timestamp: new Date(Date.now() - 28 * 60 * 60 * 1000).toISOString()
-    },
-    {
-      status: "awb_generated",
-      title: `AWB ${cleanAwb} Assigned`,
-      description: `Dispatched to ${partnerName}`,
-      location: "Origin Logistics Hub",
-      timestamp: new Date(Date.now() - 20 * 60 * 60 * 1000).toISOString()
-    },
-    {
-      status: "in_transit",
-      title: "In Transit at Sorting Facility",
-      description: "Package sorted & routed to destination regional gateway",
-      location: "Central Transshipment Hub",
-      timestamp: new Date(Date.now() - 10 * 60 * 60 * 1000).toISOString()
-    },
-    {
-      status: "out_for_delivery",
-      title: "Out for Delivery",
-      description: "Delivery executive on the way to address",
-      location: "Destination Delivery Hub",
-      timestamp: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString()
-    }
-  ];
-
   return {
-    success: true,
-    awbNumber: cleanAwb,
-    deliveryMode: "third_party",
-    courierPartnerName: partnerName,
-    currentStatus: "out_for_delivery",
-    estimatedDeliveryDate: new Date(Date.now() + 6 * 60 * 60 * 1000).toISOString(),
-    trackingUrl: fallbackUrl,
-    checkpoints
+    success: false,
+    message: `No tracking information found for AWB ${cleanAwb}. Please check the AWB number and try again.`
   };
+};
+
+// ─── 4. Cancel Shipment via Shiprocket ───────────────────────────────────────
+export const cancelShipmentService = async (shiprocketOrderIds = []) => {
+  if (!shiprocketOrderIds.length) return { success: false, message: "No Shiprocket order IDs provided" };
+  return await cancelShiprocketOrder(shiprocketOrderIds);
 };
