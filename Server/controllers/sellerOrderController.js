@@ -344,15 +344,29 @@ export const formatSellerSingleOrder = (o, scope = null) => {
   const discountAmount = Number(o.discountAmount ?? o.discount ?? 0);
   const codFee = Number(o.codFee ?? o.codCharges ?? 0);
 
-  // If this seller's items have specific coupon discounts, use that.
-  // In a multi-seller order, a coupon on another seller's item must never deduct from this seller.
-  const resolvedDiscount = sellerItemsDiscount > 0
-    ? sellerItemsDiscount
-    : (isMultiSeller ? 0 : discountAmount);
+  // Compute proportional share for multi-seller orders so Seller Panel matches invoice exactly
+  const allItemsSum = itemsList.reduce(
+    (sum, item) => sum + ((Number(item.price) || Number(item.finalPrice) || 0) * Number(item.quantity || 1)),
+    0
+  ) || 1;
+  const sellerShare = isMultiSeller ? (computedItemsSubtotal / allItemsSum) : 1;
 
-  const resolvedOrderTotal = isMultiSeller
-    ? Math.max(0, computedItemsSubtotal - resolvedDiscount)
-    : (storedOrderTotal > 0 ? storedOrderTotal : Math.max(0, computedItemsSubtotal + shippingFee + codFee - resolvedDiscount));
+  const resolvedShipping = isMultiSeller
+    ? (shippingFee > 0 ? Math.round(shippingFee * sellerShare * 100) / 100 : 0)
+    : shippingFee;
+
+  const allOrderItemsDiscount = itemsList.reduce(
+    (sum, item) => sum + (Number(item.offerDiscount || item.discount) || 0),
+    0
+  );
+
+  const resolvedDiscount = allOrderItemsDiscount > 0
+    ? sellerItemsDiscount
+    : (isMultiSeller
+        ? (discountAmount > 0 ? Math.round(discountAmount * sellerShare * 100) / 100 : 0)
+        : discountAmount);
+
+  const resolvedOrderTotal = Math.max(0, Math.round((computedItemsSubtotal + resolvedShipping - resolvedDiscount) * 100) / 100);
 
   const resolvedSubtotal = computedItemsSubtotal;
 
@@ -409,7 +423,10 @@ export const formatSellerSingleOrder = (o, scope = null) => {
                            o.settlementStatus === "refunded" || 
                            o.settlementStatus === "cancelled";
 
-  const orderSettlement = calculateSellerSettlement(resolvedOrderTotal, {
+  const settlementGross = Math.max(0, Math.round((computedItemsSubtotal - resolvedDiscount) * 100) / 100);
+
+  const orderSettlement = calculateSellerSettlement(settlementGross, {
+    baseAmount: settlementGross,
     commissionRate: Number(o.commissionRate ?? 10),
     paymentMethod: o.paymentMethod || "UPI",
     deliveryMode: o.deliveryMode || (o.selfDeliveryDetails?.deliveryPartnerToken ? "self_delivery" : "third_party"),
@@ -418,7 +435,8 @@ export const formatSellerSingleOrder = (o, scope = null) => {
     sellerState: sellerStateVal,
     customerState: customerStateVal,
     deliveryCharge: o.shippingAmount || o.deliveryCharge || 40,
-    deliveryChargeBorneBy: o.deliveryChargeBorneBy || (ordTotalVal > 400 ? 'admin' : (Number(o.shippingAmount || 0) > 0 ? 'customer' : 'seller')),
+    freeDeliveryThreshold: Number(o.freeDeliveryThreshold ?? 401),
+    deliveryChargeBorneBy: o.deliveryChargeBorneBy || (ordTotalVal >= Number(o.freeDeliveryThreshold ?? 401) ? 'admin' : (Number(o.shippingAmount || 0) > 0 ? 'customer' : 'seller')),
     isCancelled: isCancelledOrder,
     isRefunded: isCancelledOrder
   });
@@ -446,8 +464,8 @@ export const formatSellerSingleOrder = (o, scope = null) => {
     totalAmount: resolvedOrderTotal,
     subtotal: resolvedSubtotal,
     sellerSubtotal: computedItemsSubtotal,
-    shippingFee: isMultiSeller ? 0 : shippingFee,
-    shippingCost: isMultiSeller ? 0 : shippingFee,
+    shippingFee: resolvedShipping,
+    shippingCost: resolvedShipping,
     discountAmount: resolvedDiscount,
     discount: resolvedDiscount,
     couponCode: (resolvedDiscount > 0 ? (o.couponCode || o.appliedCoupon || "") : ""),
@@ -947,11 +965,15 @@ export const updateSellerOrderStatus = async (req, res) => {
       order.carrier = order.courierName;
       order.selfDeliveryDetails = undefined;
       order.deliveryOtp = "";
+      const isCod = String(order.paymentMethod || "").toUpperCase().includes("COD");
+      const dynamicRule = isCod ? "COD_THIRD_PARTY_DELIVERY" : "ONLINE_THIRD_PARTY_DELIVERY";
+      order.settlementRule = dynamicRule;
       if (Array.isArray(order.items)) {
         order.items.forEach(it => {
           it.deliveryOtp = "";
           it.selfDeliveryDetails = undefined;
           it.deliveryType = "third_party";
+          it.settlementRule = dynamicRule;
         });
       }
       effectiveAwb = trackingNumber || order.trackingNumber || "";
@@ -1004,6 +1026,9 @@ export const updateSellerOrderStatus = async (req, res) => {
         otpExpiresAt
       };
 
+      const isCod = String(order.paymentMethod || "").toUpperCase().includes("COD");
+      const dynamicRule = isCod ? "COD_SELF_DELIVERY" : "ONLINE_SELF_DELIVERY";
+      order.settlementRule = dynamicRule;
       order.deliveryOtp = otpVal;
       order.selfDeliveryDetails = mergedSelf;
       if (Array.isArray(order.items)) {
@@ -1011,6 +1036,7 @@ export const updateSellerOrderStatus = async (req, res) => {
           it.deliveryOtp = otpVal;
           if (it.selfDeliveryDetails) it.selfDeliveryDetails.deliveryOtp = otpVal;
           it.deliveryType = "self_delivery";
+          it.settlementRule = dynamicRule;
         });
       }
       order.trackingUrl = trackingLink;
@@ -1299,7 +1325,7 @@ export const downloadSellerInvoice = async (req, res) => {
     res.setHeader("Content-Type", "application/pdf");
     res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
 
-    const pdfDoc = generateTaxInvoicePDF(enrichedOrder, sellerId);
+    const pdfDoc = generateTaxInvoicePDF(enrichedOrder, sellerId, { view: "seller" });
     pdfDoc.pipe(res);
   } catch (error) {
     console.error("Seller invoice download error:", error);

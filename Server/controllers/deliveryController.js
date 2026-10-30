@@ -763,7 +763,8 @@ export const verifyDeliveryOtp = async (req, res) => {
                 category: item.category || "",
                 name: item.name || item.productName || "",
                 deliveryCharge: order.shippingAmount || order.deliveryCharge || 40,
-                deliveryChargeBorneBy: order.deliveryChargeBorneBy || (ordTotal > 400 ? 'admin' : (Number(order.shippingAmount || 0) > 0 ? 'customer' : 'seller'))
+                freeDeliveryThreshold: Number(order.freeDeliveryThreshold ?? 401),
+                deliveryChargeBorneBy: order.deliveryChargeBorneBy || (ordTotal >= Number(order.freeDeliveryThreshold ?? 401) ? 'admin' : (Number(order.shippingAmount || 0) > 0 ? 'customer' : 'seller'))
               });
 
               item.commissionRate = stl.commissionRate;

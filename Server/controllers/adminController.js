@@ -1193,6 +1193,34 @@ export const updatePlatformSettings = async (req, res) => {
       { $set: { ...updates, updatedAt: new Date() } },
       { new: true, upsert: true }
     );
+
+    // Dynamic two-way sync: Update active Free Delivery Announcement item if threshold changed
+    const effectiveThreshold = Number(settings.freeShippingThreshold ?? settings.minOrderFreeShipping);
+    if (!isNaN(effectiveThreshold) && effectiveThreshold > 0) {
+      try {
+        const Announcement = (await import("../models/Announcement.js")).default;
+        const freeDeliveryAnnouncements = await Announcement.find({
+          $or: [
+            { badge: { $regex: /free\s*delivery/i } },
+            { text: { $regex: /free\s*(delivery|shipping)/i } }
+          ]
+        });
+
+        for (const item of freeDeliveryAnnouncements) {
+          const updatedText = item.text.replace(
+            /((?:over|above|min(?:imum)?|orders?\s*(?:over|above)?)\s*(?:₹|rs\.?|inr)?\s*)\d+/i,
+            `$1${effectiveThreshold}`
+          );
+          if (updatedText !== item.text) {
+            item.text = updatedText;
+            await item.save();
+          }
+        }
+      } catch (announcementSyncErr) {
+        console.warn("Announcement threshold sync warning:", announcementSyncErr.message);
+      }
+    }
+
     res.json({ message: "Platform settings updated successfully", settings });
   } catch (error) {
     res.status(500).json({ message: "Failed to update settings", error: error.message });

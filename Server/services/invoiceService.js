@@ -425,10 +425,19 @@ export const parseStateInfo = (sourceObj, fallbackString = '') => {
  * @param {Object} [filterSellerId] - Optional seller ID if generated from a specific seller's portal
  * @returns {PDFDocument} - Streaming PDF document
  */
-export const generateTaxInvoicePDF = (order, filterSellerId = null) => {
+export const generateTaxInvoicePDF = (order, filterSellerId = null, options = {}) => {
   if (!order) {
     throw new Error("Order data is required to generate tax invoice.");
   }
+
+  const isSellerView = Boolean(
+    options.view === 'seller' ||
+    options.view === 'admin' ||
+    options.audience === 'seller' ||
+    options.isSellerCopy === true ||
+    options.role === 'seller' ||
+    options.userRole === 'seller'
+  );
 
   // Pre-filter items if specific seller requested
   let itemsToRender = order.items || [];
@@ -466,13 +475,21 @@ export const generateTaxInvoicePDF = (order, filterSellerId = null) => {
     }
   }
 
+  const isOrderConfirmedOverall = [
+    "assigned", "accepted", "confirmed", "processing", "production", "packed", "shipped",
+    "dispatched", "in_transit", "out_for_delivery", "delivered", "completed", "fulfilled",
+    "return_requested", "returned", "exchange_requested", "exchanged", "refunded", "cancelled"
+  ].includes(String(order.overallStatus || order.status || '').toLowerCase().trim());
+
   // Strictly filter itemsToRender to only include confirmed items (pending items cannot be invoiced)
-  itemsToRender = itemsToRender.filter(it => {
+  const confirmedItems = itemsToRender.filter(it => {
     const itSt = String(it.status || '').toLowerCase().trim();
     return itSt && !['pending', 'placed', 'unconfirmed', 'draft', ''].includes(itSt);
   });
 
-  if (itemsToRender.length === 0) {
+  if (confirmedItems.length > 0) {
+    itemsToRender = confirmedItems;
+  } else if (!isOrderConfirmedOverall) {
     throw new Error(
       `Tax invoice cannot be generated because items for this seller have not been confirmed yet.`
     );
@@ -714,29 +731,73 @@ export const generateTaxInvoicePDF = (order, filterSellerId = null) => {
   const rawDiscount = Number(order.discount ?? order.discountAmount ?? 0);
   const rawPointsDiscount = Number(order.pointsDiscount ?? order.pointsDiscountAmount ?? 0);
 
-  const isFilteredMultiSeller = Boolean(filterSellerId && itemsToRender.length < (order.items || []).length);
+  const isMultiSellerOrder = Boolean(itemsToRender.length < (order.items || []).length);
   const allItemsSum = (order.items || []).reduce(
     (sum, it) => sum + (Number(it.originalPrice ?? it.price ?? it.finalPrice ?? 0) * Number(it.quantity || 1)),
     0
   ) || 1;
-  const ratio = isFilteredMultiSeller ? (itemsToRender.reduce((s, it) => s + (Number(it.originalPrice ?? it.price ?? it.finalPrice ?? 0) * Number(it.quantity || 1)), 0) / allItemsSum) : 1;
-
-  const shippingCost = isFilteredMultiSeller ? Math.round(rawShipping * ratio) : rawShipping;
-  const discountAmount = isFilteredMultiSeller ? Math.round(rawDiscount * ratio) : rawDiscount;
-  const pointsDiscount = isFilteredMultiSeller ? Math.round(rawPointsDiscount * ratio) : rawPointsDiscount;
-  const totalDiscounts = discountAmount + pointsDiscount;
-
   const itemsRenderSum = itemsToRender.reduce(
     (sum, it) => sum + (Number(it.originalPrice ?? it.price ?? it.finalPrice ?? 0) * Number(it.quantity || 1)),
     0
   );
-  const isItemPriceAlreadyDiscounted = rawSubtotal > 0 && totalDiscounts > 0 && Math.abs((itemsRenderSum + totalDiscounts) - rawSubtotal) < 1;
+  const ratio = isMultiSellerOrder ? (itemsRenderSum / allItemsSum) : 1;
 
-  let subtotal = isFilteredMultiSeller ? itemsRenderSum : (rawSubtotal > 0 ? rawSubtotal : itemsRenderSum);
-  const discountRatio = subtotal > 0 ? Math.min(1, totalDiscounts / subtotal) : 0;
+  const shippingCost = isMultiSellerOrder
+    ? (rawShipping > 0 ? Math.round(rawShipping * ratio * 100) / 100 : 0)
+    : rawShipping;
+  const allOrderItemsList = order.items || [];
+  const anyOrderItemsHaveDiscount = allOrderItemsList.some(
+    (it) => (it.offerDiscount !== undefined && it.offerDiscount !== null && !isNaN(Number(it.offerDiscount)) && Number(it.offerDiscount) > 0) ||
+            (it.discount !== undefined && it.discount !== null && !isNaN(Number(it.discount)) && Number(it.discount) > 0) ||
+            Boolean(it.couponCode) ||
+            (Number(it.finalPrice) > 0 && Number(it.price) > Number(it.finalPrice))
+  );
+  const currentItemsHaveDiscount = itemsToRender.some(
+    (it) => (it.offerDiscount !== undefined && it.offerDiscount !== null && !isNaN(Number(it.offerDiscount)) && Number(it.offerDiscount) > 0) ||
+            (it.discount !== undefined && it.discount !== null && !isNaN(Number(it.discount)) && Number(it.discount) > 0) ||
+            Boolean(it.couponCode) ||
+            (Number(it.finalPrice) > 0 && Number(it.price) > Number(it.finalPrice))
+  );
+
+  const isProductSpecificCoupon = Boolean(
+    order.couponDetails?.applicableScope === 'specific_product' ||
+    (Array.isArray(order.couponDetails?.applicableProducts) && order.couponDetails.applicableProducts.length > 0)
+  );
+
+  const eligibleProductIds = new Set(
+    (order.couponDetails?.applicableProducts || [order.couponDetails?.specificProductId])
+      .filter(Boolean)
+      .map(id => String(id))
+  );
+
+  const currentSellerHasEligibleProducts = !isProductSpecificCoupon || itemsToRender.some(it => {
+    const pId = String(it.productId || it.id || it._id || '');
+    return eligibleProductIds.has(pId);
+  });
+
+  const sellerItemsDiscountSum = itemsToRender.reduce(
+    (sum, it) => sum + (Number(it.offerDiscount || it.discount) || (Number(it.finalPrice) > 0 && Number(it.price) > Number(it.finalPrice) ? Math.round((Number(it.price) - Number(it.finalPrice)) * Number(it.quantity || 1) * 100) / 100 : 0)),
+    0
+  );
+
+  const totalDiscounts = (anyOrderItemsHaveDiscount || currentItemsHaveDiscount)
+    ? sellerItemsDiscountSum
+    : (!currentSellerHasEligibleProducts
+        ? 0
+        : (isMultiSellerOrder
+            ? (rawDiscount > 0 ? Math.round((rawDiscount + rawPointsDiscount) * ratio * 100) / 100 : 0)
+            : (rawDiscount + rawPointsDiscount)));
+
+  const isItemPriceAlreadyDiscounted = !currentItemsHaveDiscount && rawSubtotal > 0 && totalDiscounts > 0 && Math.abs((itemsRenderSum + totalDiscounts) - rawSubtotal) < 1;
+
+  const subtotal = itemsRenderSum;
+  const discountRatio = (!currentItemsHaveDiscount && subtotal > 0 && totalDiscounts > 0)
+    ? Math.min(1, totalDiscounts / subtotal)
+    : 0;
 
   let totalTaxableValue = 0;
   let totalTaxAmount = 0;
+  let runningProratedDiscount = 0;
 
   const sellerStateInfo = parseStateInfo(resolvedSeller, `${resolvedSeller?.state || ''} ${resolvedSeller?.city || ''} ${resolvedSeller?.address || ''}`);
   const customerStateInfo = parseStateInfo(order.shippingAddress, `${resolvedConsumer?.street || ''} ${resolvedConsumer?.cityStatePin || ''} ${order.shippingAddress?.state || ''}`);
@@ -796,9 +857,20 @@ export const generateTaxInvoicePDF = (order, filterSellerId = null) => {
     const itemTotal = Math.round((itemUnitPrice * rawQty) * 100) / 100;
     const gstRate = getProductGstRate(item);
 
-    const itemDiscount = item.offerDiscount !== undefined && item.offerDiscount !== null && !isNaN(Number(item.offerDiscount)) && Number(item.offerDiscount) > 0
-      ? Number(item.offerDiscount)
-      : (discountRatio > 0 ? Math.round(itemTotal * discountRatio * 100) / 100 : 0);
+    let itemDiscount = 0;
+    if (currentItemsHaveDiscount) {
+      itemDiscount = Number(item.offerDiscount || item.discount || 0);
+      if (itemDiscount === 0 && Number(item.finalPrice) > 0 && Number(item.price) > Number(item.finalPrice)) {
+        itemDiscount = Math.round((Number(item.price) - Number(item.finalPrice)) * rawQty * 100) / 100;
+      }
+    } else if (discountRatio > 0 && (!isProductSpecificCoupon || eligibleProductIds.has(String(item.productId || item.id || item._id || '')))) {
+      const isLast = index === itemsToRender.length - 1;
+      itemDiscount = isLast
+        ? Math.max(0, Math.round((totalDiscounts - runningProratedDiscount) * 100) / 100)
+        : Math.min(itemTotal, Math.round((itemTotal * discountRatio) * 100) / 100);
+      runningProratedDiscount += itemDiscount;
+    }
+    itemDiscount = Math.min(itemTotal, Math.max(0, itemDiscount));
     const netItemPayable = Math.max(0, Math.round((itemTotal - itemDiscount) * 100) / 100);
 
     let itemTax = 0;
@@ -822,7 +894,7 @@ export const generateTaxInvoicePDF = (order, filterSellerId = null) => {
 
     const displayQty = formatInvoiceQuantity(item);
     const rowBg = index % 2 === 1 ? "#f8fafc" : "#ffffff";
-    const rowHeight = 30;
+    const rowHeight = itemDiscount > 0 ? 32 : 28;
 
     doc.rect(40, y - 2, 515, rowHeight).fill(rowBg);
 
@@ -834,7 +906,17 @@ export const generateTaxInvoicePDF = (order, filterSellerId = null) => {
       .font("Helvetica")
       .fontSize(6.5)
       .fillColor(mutedColor)
-      .text(variantStr || "Educational Supply", 45, y + 13, { width: 155, lineBreak: false, ellipsis: true })
+      .text(variantStr || "Educational Supply", 45, y + 12, { width: 155, lineBreak: false, ellipsis: true });
+
+    if (itemDiscount > 0) {
+      doc
+        .fontSize(6)
+        .font("Helvetica-Bold")
+        .fillColor("#059669")
+        .text(`[Coupon Applied: -Rs. ${itemDiscount.toFixed(2)} off]`, 45, y + 21, { width: 155, lineBreak: false, ellipsis: true });
+    }
+
+    doc
       .fontSize(7)
       .font("Helvetica-Bold")
       .fillColor(primaryColor)
@@ -869,7 +951,15 @@ export const generateTaxInvoicePDF = (order, filterSellerId = null) => {
       .fontSize(7.5)
       .font("Helvetica-Bold")
       .fillColor(primaryColor)
-      .text(`Rs. ${netItemPayable.toFixed(2)}`, 493, y + 5, { width: 57, align: "right" });
+      .text(`Rs. ${netItemPayable.toFixed(2)}`, 493, itemDiscount > 0 ? y + 2 : y + 5, { width: 57, align: "right" });
+
+    if (itemDiscount > 0) {
+      doc
+        .fontSize(6)
+        .font("Helvetica")
+        .fillColor("#059669")
+        .text(`(-Rs. ${itemDiscount.toFixed(2)} off)`, 475, y + 13, { width: 75, align: "right" });
+    }
 
     y += rowHeight;
     doc.strokeColor("#e2e8f0").lineWidth(0.5).moveTo(40, y - 2).lineTo(555, y - 2).stroke();
@@ -962,9 +1052,7 @@ export const generateTaxInvoicePDF = (order, filterSellerId = null) => {
   }
 
   // 6. TOTALS CALCULATION
-  const calculatedGrandTotal = isFilteredMultiSeller
-    ? Math.max(0, Math.round((subtotal + shippingCost - discountAmount - pointsDiscount) * 100) / 100)
-    : Number(order.total || order.totalAmount || (subtotal + shippingCost - discountAmount - pointsDiscount));
+  const calculatedGrandTotal = Math.max(0, Math.round((subtotal + shippingCost - totalDiscounts) * 100) / 100);
 
   let taxableValue = Math.round(totalTaxableValue * 100) / 100;
   let totalTax = Math.round(totalTaxAmount * 100) / 100;
@@ -1040,18 +1128,36 @@ export const generateTaxInvoicePDF = (order, filterSellerId = null) => {
   ].filter(r => r !== undefined && r !== null && !isNaN(Number(r)));
 
   const marketplaceCommissionRate = candidateRates.length > 0 ? Number(candidateRates[0]) : 10;
-  const marketplaceCommission = isSettlementReversed ? 0 : Math.round((calculatedGrandTotal * (marketplaceCommissionRate / 100)) * 100) / 100;
-  const gstOnCommission = isSettlementReversed ? 0 : Math.round((marketplaceCommission * 0.18) * 100) / 100;
-  const tdsAmount = isSettlementReversed ? 0 : Math.round((calculatedGrandTotal * 0.001) * 100) / 100;
+  
+  const settlementGross = Math.max(0, Math.round((subtotal - totalDiscounts) * 100) / 100);
 
-  const hasTaxableSupplies = totalTaxAmount > 0;
-  const gstTcsAmount = (isSettlementReversed || isRule3CodSelf || !hasTaxableSupplies) ? 0 : Math.round(((taxableValue * 0.5) / 100) * 100) / 100;
+  const marketplaceCommission = isSettlementReversed ? 0 : Math.round((settlementGross * (marketplaceCommissionRate / 100)) * 100) / 100;
+  const gstOnCommission = isSettlementReversed ? 0 : Math.round((marketplaceCommission * 0.18) * 100) / 100;
+  const tdsAmount = isSettlementReversed ? 0 : Math.round((settlementGross * 0.001) * 100) / 100;
+
+  const isTaxFreeOrder = (itemsToRender || []).every(it => {
+    const r = Number(it.rate ?? it.gstPercent ?? it.gstPercentage ?? it.gstRate ?? it.gst ?? 5);
+    const cat = String(it.category || '').toLowerCase();
+    return r === 0 || cat.includes('book');
+  });
+  const tcsRate = (isSettlementReversed || isRule3CodSelf || isTaxFreeOrder) ? 0 : 0.5;
+  const gstTcsAmount = (isSettlementReversed || isRule3CodSelf || isTaxFreeOrder) ? 0 : Math.round(((settlementGross * tcsRate) / 100) * 100) / 100;
+
+  const freeDeliveryThreshold = Number(order.freeDeliveryThreshold ?? order.minOrderFreeShipping ?? 401);
+  const isAboveThreshold = (settlementGross >= freeDeliveryThreshold || calculatedGrandTotal >= freeDeliveryThreshold || Number(order.total || order.totalAmount || 0) >= freeDeliveryThreshold);
+  const isAbove400 = isAboveThreshold;
+  let delivBorneBy = order.deliveryChargeBorneBy;
+  if (!delivBorneBy) {
+    if (isAboveThreshold) delivBorneBy = 'admin';
+    else if (order.isDeliveryBorneBySeller || order.deliveryBorneBy === 'seller') delivBorneBy = 'seller';
+    else if (shippingCost > 0 || Number(order.shippingFee ?? order.shippingCost ?? 0) > 0) delivBorneBy = 'customer';
+    else delivBorneBy = isThirdParty ? 'seller' : 'admin';
+  }
 
   let deliveryChargeAmount = 0;
   let gstOnDeliveryAmount = 0;
   let totalDeliveryDeduction = 0;
-  const freeDeliveryThreshold = Number(order.freeDeliveryThreshold ?? 301);
-  if (!isSettlementReversed && isThirdParty && calculatedGrandTotal < freeDeliveryThreshold) {
+  if (!isSettlementReversed && isThirdParty && delivBorneBy === 'seller' && !isAboveThreshold) {
     deliveryChargeAmount = Number(order.deliveryCharge ?? order.shippingAmount ?? order.shippingCost ?? 40);
     gstOnDeliveryAmount = Math.round(((deliveryChargeAmount * shippingGstRate) / 100) * 100) / 100;
     totalDeliveryDeduction = Math.round((deliveryChargeAmount + gstOnDeliveryAmount) * 100) / 100;
@@ -1063,82 +1169,150 @@ export const generateTaxInvoicePDF = (order, filterSellerId = null) => {
     ? 0
     : (isRule3CodSelf
       ? -totalDeductions
-      : Math.max(0, Math.round((calculatedGrandTotal - totalDeductions) * 100) / 100));
+      : Math.max(0, Math.round((settlementGross - totalDeductions) * 100) / 100));
 
   const cardY = y + 4;
   const cardHeight = 115;
   const cardWidth = 252;
 
-  // Left Card: Marketplace Commission & Settlement
-  doc.roundedRect(40, cardY, cardWidth, cardHeight, 4).fillAndStroke("#fffbeb", "#fde68a");
-  doc.rect(40, cardY, cardWidth, 16).fill("#fef3c7");
-  doc
-    .fontSize(7.5)
-    .font("Helvetica-Bold")
-    .fillColor("#78350f")
-    .text(isSettlementReversed ? "SETTLEMENT & TAX REVERSAL (SEC 34)" : "MARKETPLACE COMMISSION & SETTLEMENT", 48, cardY + 4);
-
-  let cY = cardY + 20;
-  doc.fontSize(7).font("Helvetica").fillColor("#374151");
-
-  doc
-    .text("Order Grand Total:", 48, cY)
-    .font("Helvetica-Bold")
-    .text(`Rs. ${calculatedGrandTotal.toFixed(2)}${isSettlementReversed ? " (Reversed)" : ""}`, 200, cY, { width: 85, align: "right" });
-  cY += 11;
-
-  doc
-    .font("Helvetica")
-    .text(`Commission (${marketplaceCommissionRate}%):`, 48, cY)
-    .text(isSettlementReversed ? "Rs. 0.00 (Waived)" : `-Rs. ${marketplaceCommission.toFixed(2)}`, 200, cY, { width: 85, align: "right" });
-  cY += 11;
-
-  doc
-    .text("GST on Commission (18%):", 48, cY)
-    .text(isSettlementReversed ? "Rs. 0.00 (Waived)" : `-Rs. ${gstOnCommission.toFixed(2)}`, 200, cY, { width: 85, align: "right" });
-  cY += 11;
-
-  doc
-    .text("TDS 0.1% (Sec 194-O):", 48, cY)
-    .text(isSettlementReversed ? "Rs. 0.00 (Reversed)" : `-Rs. ${tdsAmount.toFixed(2)}`, 200, cY, { width: 85, align: "right" });
-  cY += 11;
-
-  doc
-    .text("GST TCS (Sec 52):", 48, cY)
-    .text(isSettlementReversed ? "Rs. 0.00 (Reversed)" : (gstTcsAmount > 0 ? `-Rs. ${gstTcsAmount.toFixed(2)}` : "Rs. 0.00 (Exempt)"), 200, cY, { width: 85, align: "right" });
-  cY += 11;
-
-  if (isThirdParty) {
+  // Left Card: Depending on viewer (Seller/Admin vs Customer)
+  if (isSellerView) {
+    // Seller/Admin Settlement Breakdown Card
+    doc.roundedRect(40, cardY, cardWidth, cardHeight, 4).fillAndStroke("#fffbeb", "#fde68a");
+    doc.rect(40, cardY, cardWidth, 16).fill("#fef3c7");
     doc
-      .text("Delivery Charges (Policy):", 48, cY)
-      .text(isSettlementReversed ? "Rs. 0.00 (Waived)" : (totalDeliveryDeduction > 0 ? `-Rs. ${totalDeliveryDeduction.toFixed(2)}` : `FREE (>=Rs. ${freeDeliveryThreshold})`), 200, cY, { width: 85, align: "right" });
+      .fontSize(7.5)
+      .font("Helvetica-Bold")
+      .fillColor("#78350f")
+      .text(isSettlementReversed ? "SETTLEMENT & TAX REVERSAL (SEC 34)" : "MARKETPLACE COMMISSION & SETTLEMENT", 48, cardY + 4);
+
+    let cY = cardY + 20;
+    doc.fontSize(7).font("Helvetica").fillColor("#374151");
+
+    doc
+      .text(isSettlementReversed ? "Original Gross Sale:" : (isRule3CodSelf ? "Cash Collected by Seller:" : (isRule4CodCourier ? "Cash via Courier Remittance:" : "Gross Sale (Net Product):")), 48, cY)
+      .font("Helvetica-Bold")
+      .text(`Rs. ${settlementGross.toFixed(2)}${isSettlementReversed ? " (Reversed)" : ""}`, 200, cY, { width: 85, align: "right" });
     cY += 11;
-  }
 
-  doc.strokeColor("#fde68a").lineWidth(0.5).moveTo(48, cY).lineTo(284, cY).stroke();
-  cY += 4;
+    doc
+      .font("Helvetica")
+      .text(`Commission (${marketplaceCommissionRate}%):`, 48, cY)
+      .text(isSettlementReversed ? "Rs. 0.00 (Waived)" : `-Rs. ${marketplaceCommission.toFixed(2)}`, 200, cY, { width: 85, align: "right" });
+    cY += 11;
 
-  if (isSettlementReversed) {
     doc
-      .fontSize(7.5)
-      .font("Helvetica-Bold")
-      .fillColor("#b91c1c")
-      .text("Pending Seller Settlement:", 48, cY)
-      .text("Rs. 0.00 (Reversed)", 200, cY, { width: 85, align: "right" });
-  } else if (isRule3CodSelf) {
+      .text("GST on Commission (18%):", 48, cY)
+      .text(isSettlementReversed ? "Rs. 0.00 (Waived)" : `-Rs. ${gstOnCommission.toFixed(2)}`, 200, cY, { width: 85, align: "right" });
+    cY += 11;
+
     doc
-      .fontSize(7.5)
-      .font("Helvetica-Bold")
-      .fillColor("#b91c1c")
-      .text("Settlement (Owed to Portal):", 48, cY)
-      .text(`-Rs. ${Math.abs(sellerSettlement).toFixed(2)}`, 200, cY, { width: 85, align: "right" });
+      .text("TDS 0.1% (Sec 194-O):", 48, cY)
+      .text(isSettlementReversed ? "Rs. 0.00 (Reversed)" : `-Rs. ${tdsAmount.toFixed(2)}`, 200, cY, { width: 85, align: "right" });
+    cY += 11;
+
+    doc
+      .text("GST TCS (Sec 52):", 48, cY)
+      .text(isSettlementReversed ? "Rs. 0.00 (Reversed)" : (gstTcsAmount > 0 ? `-Rs. ${gstTcsAmount.toFixed(2)}` : "Rs. 0.00 (Exempt)"), 200, cY, { width: 85, align: "right" });
+    cY += 11;
+
+    if (isThirdParty) {
+      doc
+        .text("Delivery Charges (Policy):", 48, cY)
+        .text(isSettlementReversed ? "Rs. 0.00 (Waived)" : (totalDeliveryDeduction > 0 ? `-Rs. ${totalDeliveryDeduction.toFixed(2)}` : `FREE (>=Rs. ${freeDeliveryThreshold})`), 200, cY, { width: 85, align: "right" });
+      cY += 11;
+    }
+
+    doc.strokeColor("#fde68a").lineWidth(0.5).moveTo(48, cY).lineTo(284, cY).stroke();
+    cY += 4;
+
+    if (isSettlementReversed) {
+      doc
+        .fontSize(7.5)
+        .font("Helvetica-Bold")
+        .fillColor("#b91c1c")
+        .text("Pending Seller Settlement:", 48, cY)
+        .text("Rs. 0.00 (Reversed)", 200, cY, { width: 85, align: "right" });
+    } else if (isRule3CodSelf) {
+      doc
+        .fontSize(7.5)
+        .font("Helvetica-Bold")
+        .fillColor("#b91c1c")
+        .text("Settlement (Owed to Portal):", 48, cY)
+        .text(`-Rs. ${Math.abs(sellerSettlement).toFixed(2)}`, 200, cY, { width: 85, align: "right" });
+    } else {
+      doc
+        .fontSize(7.5)
+        .font("Helvetica-Bold")
+        .fillColor("#065f46")
+        .text("Net Payable to Seller:", 48, cY)
+        .text(`Rs. ${sellerSettlement.toFixed(2)}`, 200, cY, { width: 85, align: "right" });
+    }
   } else {
+    // Customer Invoice: PAYMENT & ORDER AUTHENTICITY (Never show seller commission/settlement to consumer)
+    doc.roundedRect(40, cardY, cardWidth, cardHeight, 4).fillAndStroke("#f8fafc", "#e2e8f0");
+    doc.rect(40, cardY, cardWidth, 16).fill("#f1f5f9");
     doc
       .fontSize(7.5)
       .font("Helvetica-Bold")
-      .fillColor("#065f46")
-      .text("Net Payable to Seller:", 48, cY)
-      .text(`Rs. ${sellerSettlement.toFixed(2)}`, 200, cY, { width: 85, align: "right" });
+      .fillColor(primaryColor)
+      .text(isOrderCancelled ? "REFUND & ORDER STATUS" : "PAYMENT & ORDER AUTHENTICITY", 48, cardY + 4);
+
+    let cY = cardY + 20;
+    doc.fontSize(7).font("Helvetica").fillColor("#374151");
+
+    const isPaid = (order.paymentStatus || "").toLowerCase() === "paid" || (!isCod && order.paymentStatus !== "failed");
+    const paymentStatusText = isOrderCancelled
+      ? "Refund Processed (Credit Note)"
+      : (isCod ? "Cash on Delivery (Pending)" : (isPaid ? "Payment Verified (PAID)" : "Payment Pending"));
+
+    doc
+      .text("Payment Status:", 48, cY)
+      .font("Helvetica-Bold")
+      .fillColor(isOrderCancelled ? "#b91c1c" : (isPaid ? "#059669" : "#d97706"))
+      .text(paymentStatusText, 140, cY, { width: 145, align: "right" });
+    cY += 11;
+
+    doc
+      .font("Helvetica")
+      .fillColor("#374151")
+      .text("Payment Method:", 48, cY)
+      .font("Helvetica-Bold")
+      .fillColor(primaryColor)
+      .text(cleanPaymentMethod || (isCod ? "Cash on Delivery" : "Online UPI / Card"), 140, cY, { width: 145, align: "right", lineBreak: false, ellipsis: true });
+    cY += 11;
+
+    const txnId = order.paymentId || (order.paymentDetails?.razorpay_payment_id || order.razorpayPaymentId || order.transactionId || order.transId || "");
+    if (txnId) {
+      doc
+        .font("Helvetica")
+        .fillColor("#374151")
+        .text("Ref / Txn ID:", 48, cY)
+        .font("Helvetica-Bold")
+        .fillColor(primaryColor)
+        .text(String(txnId), 140, cY, { width: 145, align: "right", lineBreak: false, ellipsis: true });
+      cY += 11;
+    }
+
+    doc
+      .font("Helvetica")
+      .fillColor("#374151")
+      .text("Total Amount Paid:", 48, cY)
+      .font("Helvetica-Bold")
+      .fillColor("#059669")
+      .text(`Rs. ${calculatedGrandTotal.toFixed(2)}`, 140, cY, { width: 145, align: "right" });
+    cY += 13;
+
+    doc.strokeColor("#cbd5e1").lineWidth(0.5).moveTo(48, cY).lineTo(284, cY).stroke();
+    cY += 5;
+
+    doc
+      .font("Helvetica")
+      .fontSize(6.5)
+      .fillColor(mutedColor)
+      .text("• 100% Genuine educational supplies directly from authorized partner store.", 48, cY, { width: 236 })
+      .text("• Standard 7-Day return / exchange guarantee from delivery date.", 48, cY + 9, { width: 236 })
+      .text("• Official computer-generated GST tax invoice under Section 31 of CGST Act.", 48, cY + 18, { width: 236 });
   }
 
   // Right Card: Place of Supply & Statutory Tax Meta
@@ -1963,15 +2137,59 @@ export const generateExchangeInvoicePDF = (order, filterSellerId = null) => {
   }
   doc.font("Helvetica-Bold").fillColor(primaryColor).text("Category: End Consumer / Student Recipient", custCardX + 8, cardY + 64, { width: 236 });
 
-  // 3. EXCHANGE SUMMARY BOX
+  // 3. EXCHANGE SUMMARY BOX & ITEM RESOLUTION
+  let itemsToRender = Array.isArray(order.items) ? [...order.items] : [];
+  const exchangeItemId = order.returnRequest?.itemId;
+  if (exchangeItemId) {
+    const matched = itemsToRender.find(it => String(it._id || it.id) === String(exchangeItemId));
+    if (matched) itemsToRender = [matched];
+  }
+  if (filterSellerId) {
+    itemsToRender = itemsToRender.filter(
+      (item) => item.sellerId && (item.sellerId._id || item.sellerId).toString() === filterSellerId.toString()
+    );
+  }
+  if (itemsToRender.length === 0 && Array.isArray(order.items)) {
+    itemsToRender = [...order.items];
+  }
+
+  const targetItemForExchange = itemsToRender[0] || {};
+  const targetCatStr = [targetItemForExchange.category, targetItemForExchange.subCategory, targetItemForExchange.name].filter(Boolean).join(' ').toLowerCase();
+  const isFootwearItem = targetCatStr.includes('footwear') || targetCatStr.includes('shoe') || targetCatStr.includes('boot') || targetCatStr.includes('sandal') || targetCatStr.includes('sneaker') || targetCatStr.includes('sock');
+  const isBookItem = targetCatStr.includes('book') || targetCatStr.includes('ncert') || targetCatStr.includes('textbook');
+  const isStationeryItem = targetCatStr.includes('notebook') || targetCatStr.includes('register') || targetCatStr.includes('stationery');
+  const isActualMeterItem = Boolean(
+    order.returnRequest?.isMeterBased &&
+    (targetItemForExchange.unit === 'meter' || targetItemForExchange.unit === 'mtr' || targetItemForExchange.isMeterBased) &&
+    !isFootwearItem && !isBookItem && !isStationeryItem
+  );
+
+  let rawTargetSize = String(order.returnRequest?.exchangeSize || "Requested Variant").trim();
+  rawTargetSize = rawTargetSize.replace(/^(Replacement Size|Fabric Length|Shoe Size|Grade \/ Edition|Ruling \/ Variant|Requested Variant):\s*/i, '');
+
+  let targetVariantDisplay;
+  if (isActualMeterItem && (order.returnRequest?.exchangeLength || /meter/i.test(rawTargetSize))) {
+    const lenVal = order.returnRequest?.exchangeLength || rawTargetSize.replace(/\D/g, '') || '1';
+    targetVariantDisplay = `Fabric Length: ${lenVal} Meter(s)`;
+  } else if (isFootwearItem) {
+    targetVariantDisplay = `Shoe Size: ${rawTargetSize}`;
+  } else if (isBookItem) {
+    targetVariantDisplay = `Grade / Edition: ${rawTargetSize}`;
+  } else if (isStationeryItem) {
+    targetVariantDisplay = `Ruling / Variant: ${rawTargetSize}`;
+  } else {
+    targetVariantDisplay = `Replacement Size: ${rawTargetSize}`;
+  }
+
+  let exchangeReason = order.returnRequest?.reason || "Size / Variant Replacement Request";
+  if (isFootwearItem && exchangeReason.toLowerCase().includes('fabric length')) {
+    exchangeReason = "Need larger shoe size (Fitting replacement)";
+  }
+
   const statusBoxY = 197;
   const statusBoxHeight = 36;
   doc.roundedRect(40, statusBoxY, 515, statusBoxHeight, 4).fillAndStroke("#f0fdf4", "#bbf7d0"); // Emerald tint
 
-  const exchangeReason = order.returnRequest?.reason || "Size / Variant Replacement Request";
-  const targetSize = order.returnRequest?.exchangeSize || "Requested Size Variant";
-  const targetLength = order.returnRequest?.exchangeLength ? `${order.returnRequest.exchangeLength} Meter(s)` : null;
-  const targetVariantDisplay = targetLength ? `Fabric Length: ${targetLength}` : `Replacement Size: ${targetSize}`;
   const courierPartner = order.returnRequest?.exchangeCourierName || order.returnRequest?.exchangeCourier || "BookVardi Express Logistics Fleet";
   const awbNumber = order.returnRequest?.exchangeAwbNumber || order.returnRequest?.exchangeAwb || "Pending AWB Generation";
 
@@ -2002,14 +2220,6 @@ export const generateExchangeInvoicePDF = (order, filterSellerId = null) => {
     .text("Original Invoice Value", 410, tableTop + 5, { width: 140, align: "right" });
 
   let y = tableTop + 24;
-  let itemsToRender = Array.isArray(order.items) ? [...order.items] : [];
-
-  // Match target item if specified
-  const exchangeItemId = order.returnRequest?.itemId;
-  if (exchangeItemId) {
-    const matched = itemsToRender.find(it => String(it._id || it.id) === String(exchangeItemId));
-    if (matched) itemsToRender = [matched];
-  }
 
   if (filterSellerId) {
     itemsToRender = itemsToRender.filter(

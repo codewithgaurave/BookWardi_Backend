@@ -53,6 +53,7 @@ import {
   getSellerWalletOverview,
   requestPayout
 } from "../controllers/payoutController.js";
+import { registerSellerPickup } from "../controllers/deliveryPartnerController.js";
 import { exportSellerOrders } from "../controllers/exportController.js";
 import { uploadSellerDocs, uploadProductImages } from "../middlewares/upload.js";
 import { authenticateSeller } from "../middlewares/auth.js";
@@ -183,6 +184,9 @@ router.patch("/promotions/:id/status", authenticateSeller, toggleSellerOfferStat
 // ==========================================
 router.get("/wallet", authenticateSeller, getSellerWalletOverview);
 router.post("/payout-request", authenticateSeller, requestPayout);
+
+// Shiprocket Pickup Address Registration
+router.post("/register-shiprocket-pickup", authenticateSeller, registerSellerPickup);
 
 import {
   getSellerReviews,

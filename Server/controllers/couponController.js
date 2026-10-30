@@ -148,10 +148,26 @@ export const applyCoupon = async (req, res) => {
     if (Array.isArray(cartItems) && cartItems.length > 0) {
       const eligibleItems = cartItems.filter((item) => {
         const itemSellerId = extractId(item.sellerId) || extractId(item.sellerDetails?.sellerId) || extractId(item.seller) || extractId(item.storeId) || extractId(item.userId);
-        const itemProductId = extractId(item.productId) || extractId(item.id) || extractId(item._id);
-        const itemKitId = extractId(item.kitId) || extractId(item.bundleId) || extractId(item.id) || extractId(item._id);
+        const prodCandidateIds = [
+          extractId(item.productId),
+          extractId(item.id),
+          extractId(item._id),
+          extractId(item.customId),
+          extractId(item.itemProductId)
+        ].filter(Boolean);
+
+        const kitCandidateIds = [
+          extractId(item.kitId),
+          extractId(item.bundleId),
+          extractId(item.id),
+          extractId(item._id)
+        ].filter(Boolean);
+
         const isKit = Boolean(item.isKit || item.kitId || item.bundleId || item.itemType === 'kit' || item.type === 'kit' || (item.category && String(item.category).toLowerCase().includes('kit')));
         const isCustomized = Boolean(item.isCustomized || (item.name && item.name.includes('(Custom Bundle)')));
+
+        const isProdMatched = applicableProds.length > 0 && prodCandidateIds.some(cand => applicableProds.some(p => p.toLowerCase() === cand.toLowerCase()));
+        const isKitMatched = applicableKits.length > 0 && kitCandidateIds.some(cand => applicableKits.some(k => k.toLowerCase() === cand.toLowerCase()));
 
         if (isSellerScoped) {
           // Seller-created coupon applies ONLY to items from that seller
@@ -170,28 +186,27 @@ export const applyCoupon = async (req, res) => {
           if (!isKit) return false;
           if (isCustomized) return false;
           if (applicableKits.length === 0) return true;
-          return applicableKits.some(k => k.toLowerCase() === itemKitId.toLowerCase() || (itemProductId && k.toLowerCase() === itemProductId.toLowerCase()));
+          return isKitMatched;
         }
 
         if (scope === "specific_product") {
           if (isKit) return false;
           if (applicableProds.length === 0) return true;
-          return itemProductId ? applicableProds.some(p => p.toLowerCase() === itemProductId.toLowerCase()) : false;
+          return isProdMatched;
         }
 
         // Storewide / fallback logic
         if (applicableProds.length > 0) {
-          const prodMatch = itemProductId ? applicableProds.some(p => p.toLowerCase() === itemProductId.toLowerCase()) : false;
-          if (prodMatch) return true;
+          if (isProdMatched) return true;
           if (applicableKits.length > 0 && isKit && !isCustomized) {
-            return applicableKits.some(k => k.toLowerCase() === itemKitId.toLowerCase());
+            return isKitMatched;
           }
           return false;
         }
 
         if (applicableKits.length > 0) {
           if (!isKit || isCustomized) return false;
-          return applicableKits.some(k => k.toLowerCase() === itemKitId.toLowerCase());
+          return isKitMatched;
         }
 
         return true;
@@ -278,7 +293,11 @@ export const applyCoupon = async (req, res) => {
         usageCount: coupon.usageCount || 0,
         createdRole: coupon.createdRole || (targetSellerId ? "seller" : "admin"),
         sellerId: targetSellerId,
-        applicableProducts: applicableProds
+        applicableScope: scope,
+        specificProductId: coupon.specificProductId || null,
+        specificKitId: coupon.specificKitId || null,
+        applicableProducts: applicableProds,
+        applicableKits: applicableKits
       },
       cartTotal: totalNum,
       eligibleSubtotal,

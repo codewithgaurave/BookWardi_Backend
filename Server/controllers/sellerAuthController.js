@@ -681,6 +681,24 @@ export const updateSellerProfile = async (req, res) => {
       new: true
     }).select("-password");
 
+    // Re-sync Shiprocket pickup address if address-related fields changed
+    const addressChanged = finalAddress || city || state || pincode;
+    if (addressChanged && updatedSeller?.status === "approved") {
+      try {
+        const { registerSellerPickupAddress } = await import("../services/shiprocketService.js");
+        const srResult = await registerSellerPickupAddress(updatedSeller);
+        if (srResult.success) {
+          await Seller.findByIdAndUpdate(req.user.id, {
+            shiprocketPickupLocation: srResult.pickupLocationName,
+            shiprocketPickupRegisteredAt: new Date()
+          });
+          updatedSeller.shiprocketPickupLocation = srResult.pickupLocationName;
+        }
+      } catch (srErr) {
+        console.warn("⚠️ [SHIPROCKET] Pickup re-sync failed on profile update:", srErr.message);
+      }
+    }
+
     res.json({
       success: true,
       message: "Profile updated successfully",
