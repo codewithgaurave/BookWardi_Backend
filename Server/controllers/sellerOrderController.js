@@ -774,7 +774,7 @@ const resolveCarrierTrackingUrl = (courier, tracking) => {
   if (c.includes("indiapost") || c.includes("speedpost") || c.includes("india post")) {
     return `https://www.indiapost.gov.in/_layouts/15/dpt.cept.tracking/trackconsignment.aspx`;
   }
-  return `https://track.shiprocket.in/tracking/${cleanAwb}`;
+  return `https://shiprocket.co/tracking/${cleanAwb}`;
 };
 
 const resolveSellerProfileDetails = async (req, fallbackOrder) => {
@@ -1116,7 +1116,7 @@ export const updateSellerOrderStatus = async (req, res) => {
               order.shiprocketShipmentId = srOrder.shipmentId;
               order.trackingNumber = awbResult.awbCode;
               order.courierName = awbResult.courierName || "Shiprocket";
-              order.trackingUrl = `https://track.shiprocket.in/tracking/${awbResult.awbCode}`;
+              order.trackingUrl = `https://shiprocket.co/tracking/${awbResult.awbCode}`;
               generateShiprocketPickup(srOrder.shipmentId).catch(() => {});
               console.log(`✅ [SHIPROCKET] Seller dispatched Order ${order.orderId}: AWB ${awbResult.awbCode} via ${awbResult.courierName}`);
             }

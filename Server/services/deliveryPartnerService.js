@@ -215,7 +215,7 @@ export const generateShipmentAwbService = async (orderData, courierCode = "SHIPR
       },
       pickupScheduledDate: pickupResult.pickupScheduledDate,
       estimatedDeliveryDate: new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString(),
-      trackingUrl: `https://track.shiprocket.in/tracking/${awbResult.awbCode}`,
+      trackingUrl: `https://shiprocket.co/tracking/${awbResult.awbCode}`,
       courierLogs: [
         {
           title: "Shiprocket Order Created",
@@ -292,7 +292,7 @@ export const getLiveAwbTrackingService = async (awbNumber) => {
         currentStatus: trackResult.currentStatus || "shipped",
         currentStatusLabel: trackResult.currentStatusLabel || "",
         estimatedDeliveryDate: trackResult.estimatedDeliveryDate || new Date(Date.now() + 2 * 24 * 60 * 60 * 1000).toISOString(),
-        trackingUrl: `https://track.shiprocket.in/tracking/${cleanAwb}`,
+        trackingUrl: `https://shiprocket.co/tracking/${cleanAwb}`,
         sellerDetails: matchedOrder?.sellerDetails || null,
         checkpoints: trackResult.checkpoints
       };
@@ -306,7 +306,7 @@ export const getLiveAwbTrackingService = async (awbNumber) => {
     const isSelf = matchedOrder.deliveryMode === "self_delivery" || Boolean(matchedOrder.selfDeliveryDetails?.deliveryPartnerToken);
     const courier = matchedOrder.courierName || "Courier Partner";
 
-    let trackingUrl = matchedOrder.trackingUrl || `https://track.shiprocket.in/tracking/${cleanAwb}`;
+    let trackingUrl = matchedOrder.trackingUrl || `https://shiprocket.co/tracking/${cleanAwb}`;
 
     const checkpoints = (matchedOrder.timeline?.length > 0)
       ? matchedOrder.timeline.map((evt) => ({

@@ -291,7 +291,7 @@ export const trackShiprocketAwb = async (awbCode) => {
       currentStatus: mapShiprocketStatus(shipmentTrack["current-status"] || shipmentTrack.status || ""),
       currentStatusLabel: shipmentTrack["current-status"] || "",
       estimatedDeliveryDate: shipmentTrack.etd || null,
-      trackingUrl: `https://track.shiprocket.in/tracking/${awbCode}`,
+      trackingUrl: `https://shiprocket.co/tracking/${awbCode}`,
       checkpoints: checkpoints.length > 0 ? checkpoints : [
         {
           status: "shipped",

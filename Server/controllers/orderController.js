@@ -2859,7 +2859,7 @@ export const updateOrder = async (req, res) => {
             existingOrder.shiprocketShipmentId = srOrder.shipmentId;
             existingOrder.trackingNumber = awbResult.awbCode;
             existingOrder.courierName = awbResult.courierName || req.body.courierCode || 'Shiprocket';
-            existingOrder.trackingUrl = `https://track.shiprocket.in/tracking/${awbResult.awbCode}`;
+            existingOrder.trackingUrl = `https://shiprocket.co/tracking/${awbResult.awbCode}`;
             existingOrder.deliveryMode = 'third_party';
             if (Array.isArray(existingOrder.items)) {
               existingOrder.items.forEach(item => {
@@ -2868,7 +2868,7 @@ export const updateOrder = async (req, res) => {
                   ...item.thirdPartyDetails,
                   courierName: awbResult.courierName || 'Shiprocket',
                   trackingNumber: awbResult.awbCode,
-                  trackingUrl: `https://track.shiprocket.in/tracking/${awbResult.awbCode}`
+                  trackingUrl: `https://shiprocket.co/tracking/${awbResult.awbCode}`
                 };
               });
             }
