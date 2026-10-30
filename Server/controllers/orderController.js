@@ -264,6 +264,21 @@ export const findOrderById = async (searchId) => {
         ]
       });
       if (order) return order;
+    }
+
+    // Hex substring match for Mongo ObjectIds that might have been partially truncated
+    if (/^[0-9a-fA-F]{16,24}$/.test(cleanId)) {
+      try {
+        order = await Order.findOne({
+          $or: [
+            { orderId: cleanId },
+            { id: cleanId },
+            { _id: new RegExp(`^${cleanId}`) }
+          ]
+        });
+        if (order) return order;
+      } catch (hexErr) {}
+    }
 
       // Dynamic SC- code matching fallback
       const numCode = parseInt(digits, 10);

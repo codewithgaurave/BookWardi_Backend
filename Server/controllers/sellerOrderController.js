@@ -8,6 +8,7 @@ import { sendDeliveryPartnerWhatsAppDispatch } from "../services/whatsappService
 import { broadcastRealtimeEvent } from "../services/realtimeService.js";
 import { calculateSellerSettlement } from "../services/settlementService.js";
 import { sendOrderStatusSms } from "../services/smsService.js";
+import { createShiprocketOrder, assignShiprocketAwb, generateShiprocketPickup } from "../services/shiprocketService.js";
 import { getSellerInvoicePrefix, formatSellerInvoiceNumber } from "../utils/invoiceHelper.js";
 
 // Global in-memory cache for ultra-fast seller orders
@@ -1101,7 +1102,31 @@ export const updateSellerOrderStatus = async (req, res) => {
           it.settlementRule = dynamicRule;
         });
       }
-      effectiveAwb = trackingNumber || order.trackingNumber || "";
+      // Auto Shiprocket integration if third_party courier dispatch
+      const isThirdPartyShipment = (formattedStatus === "Shipped" || status === "Shipped") && !order.shiprocketOrderId;
+      if (isThirdPartyShipment && process.env.SHIPROCKET_API_PASSWORD) {
+        try {
+          const weightKg = Number(req.body.weightKg) || 1;
+          const srOrder = await createShiprocketOrder(order, weightKg);
+          if (srOrder && srOrder.success) {
+            const awbResult = await assignShiprocketAwb(srOrder.shipmentId);
+            if (awbResult && awbResult.success) {
+              effectiveAwb = awbResult.awbCode;
+              order.shiprocketOrderId = srOrder.shiprocketOrderId;
+              order.shiprocketShipmentId = srOrder.shipmentId;
+              order.trackingNumber = awbResult.awbCode;
+              order.courierName = awbResult.courierName || "Shiprocket";
+              order.trackingUrl = `https://track.shiprocket.in/tracking/${awbResult.awbCode}`;
+              generateShiprocketPickup(srOrder.shipmentId).catch(() => {});
+              console.log(`✅ [SHIPROCKET] Seller dispatched Order ${order.orderId}: AWB ${awbResult.awbCode} via ${awbResult.courierName}`);
+            }
+          }
+        } catch (srErr) {
+          console.warn("⚠️ [SHIPROCKET] Seller dispatch error (fallback to local):", srErr.message);
+        }
+      }
+
+      effectiveAwb = effectiveAwb || trackingNumber || order.trackingNumber || "";
       if (!effectiveAwb || effectiveAwb.startsWith("DLV-")) {
         const courierPrefix = String(order.courierName || "SHIPROCKET")
           .toUpperCase()
@@ -1110,7 +1135,7 @@ export const updateSellerOrderStatus = async (req, res) => {
         effectiveAwb = `${courierPrefix}-${Math.floor(10000000 + Math.random() * 90000000)}`;
       }
       order.trackingNumber = effectiveAwb;
-      computedTrackingUrl = trackingUrl || resolveCarrierTrackingUrl(order.courierName, effectiveAwb);
+      computedTrackingUrl = order.trackingUrl || trackingUrl || resolveCarrierTrackingUrl(order.courierName, effectiveAwb);
       if (computedTrackingUrl) order.trackingUrl = computedTrackingUrl;
     } else if (resolvedMode === "self_delivery") {
       const clientAppUrl = (process.env.CLIENT_URL || process.env.FRONTEND_BASE_URL || "http://localhost:5173").replace(/\/+$/, '');
@@ -1227,6 +1252,8 @@ export const updateSellerOrderStatus = async (req, res) => {
       updatePayload.selfDeliveryDetails = null;
       if (effectiveAwb) updatePayload.trackingNumber = effectiveAwb;
       if (computedTrackingUrl) updatePayload.trackingUrl = computedTrackingUrl;
+      if (order.shiprocketOrderId) updatePayload.shiprocketOrderId = order.shiprocketOrderId;
+      if (order.shiprocketShipmentId) updatePayload.shiprocketShipmentId = order.shiprocketShipmentId;
     } else if (resolvedMode === "self_delivery" && mergedSelf) {
       updatePayload.courierName = "";
       updatePayload.carrier = "";
