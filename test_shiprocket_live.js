@@ -131,7 +131,7 @@ async function testCreateOrder() {
       billing_state: 'Delhi',
       billing_country: 'India',
       billing_email: 'test@bookvardi.com',
-      billing_phone: '9999999999',
+      billing_phone: '9027237697',
       billing_alternate_phone: '',
       shipping_is_billing: true,
       order_items: [{
