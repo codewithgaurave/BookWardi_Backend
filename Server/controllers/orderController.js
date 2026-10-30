@@ -294,7 +294,6 @@ export const findOrderById = async (searchId) => {
           return match;
         }
       }
-    }
 
     return null;
   } catch (err) {
