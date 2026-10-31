@@ -1066,6 +1066,9 @@ export const getMyOrders = async (req, res) => {
       return {
         id: ord.id || ord.orderId || ord._id,
         orderId: ord.orderId || ord.id || ord._id,
+        invoiceNumber: ord.invoiceNumber || ord.sellerInvoiceNo || "",
+        sellerInvoiceNo: ord.sellerInvoiceNo || ord.invoiceNumber || "",
+        sellerSequence: ord.sellerSequence || null,
         date: ord.date || new Date(ord.createdAt).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', timeZone: 'Asia/Kolkata' }),
         createdAt: ord.createdAt,
         status: canonicalStatus,
@@ -2211,6 +2214,9 @@ export const trackOrder = async (req, res) => {
     const trackingSummary = {
       orderId: order.orderId,
       orderDbId: order._id,
+      invoiceNumber: order.invoiceNumber || order.sellerInvoiceNo || "",
+      sellerInvoiceNo: order.sellerInvoiceNo || order.invoiceNumber || "",
+      sellerSequence: order.sellerSequence || null,
       createdAt: order.createdAt,
       estimatedDeliveryDate: order.estimatedDeliveryDate,
       currentStatus: order.overallStatus || order.status,
