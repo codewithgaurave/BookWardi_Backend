@@ -7,7 +7,7 @@ import {
   getLiveAwbTrackingService,
   cancelShipmentService
 } from "../services/deliveryPartnerService.js";
-import { registerSellerPickupAddress } from "../services/shiprocketService.js";
+import { registerSellerPickupAddress, getShiprocketLabel } from "../services/shiprocketService.js";
 
 // GET /api/delivery/config
 export const getDeliveryConfig = async (req, res) => {
@@ -284,5 +284,43 @@ export const cancelShipment = async (req, res) => {
     });
   } catch (error) {
     res.status(500).json({ success: false, message: "Failed to cancel shipment AWB", error: error.message });
+  }
+};
+
+// GET /api/delivery-partners/label/:orderId
+export const getShippingLabel = async (req, res) => {
+  try {
+    const { orderId } = req.params;
+    let order = await Order.findById(orderId).catch(() => null);
+    if (!order) {
+      order = await Order.findOne({ $or: [{ orderId }, { id: orderId }] });
+    }
+    if (!order) {
+      return res.status(404).json({ success: false, message: "Order not found" });
+    }
+
+    const shipmentDetails = order.shipmentDetails || {};
+    let labelUrl = shipmentDetails.shippingLabelUrl || "";
+
+    if (!labelUrl) {
+      const shipmentId = shipmentDetails.shiprocketShipmentId || (shipmentDetails.shipments && shipmentDetails.shipments[0]?.shiprocketShipmentId);
+      if (shipmentId) {
+        const labelResult = await getShiprocketLabel(shipmentId);
+        if (labelResult?.labelUrl) {
+          labelUrl = labelResult.labelUrl;
+          order.set("shipmentDetails.shippingLabelUrl", labelUrl, { strict: false });
+          await order.save();
+        }
+      }
+    }
+
+    res.json({
+      success: true,
+      labelUrl,
+      awbNumber: order.trackingNumber || "",
+      courierName: order.courierName || ""
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: "Failed to get shipping label", error: error.message });
   }
 };

@@ -6,7 +6,8 @@ import {
   createShipment,
   registerSellerPickup,
   trackAwb,
-  cancelShipment
+  cancelShipment,
+  getShippingLabel
 } from "../controllers/deliveryPartnerController.js";
 import { authenticateAdmin, authenticateSeller } from "../middlewares/auth.js";
 
@@ -27,6 +28,9 @@ router.post("/register-pickup", authenticateSeller, registerSellerPickup);
 
 // Live AWB Tracking (public — used on order tracking page)
 router.get("/track/:awb", trackAwb);
+
+// Get Shipping Label URL
+router.get("/label/:orderId", getShippingLabel);
 
 // Cancel Shipment (Admin only)
 router.post("/cancel-shipment", authenticateAdmin, cancelShipment);
