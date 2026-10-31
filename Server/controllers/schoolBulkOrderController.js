@@ -30,11 +30,16 @@ export const findSchoolBulkOrderByIdOrRef = async (idOrRef) => {
   if (mongoose.Types.ObjectId.isValid(clean)) {
     const doc = await SchoolBulkOrder.findById(clean);
     if (doc) return doc;
+    const byQuote = await SchoolBulkOrder.findOne({ "quotations._id": clean });
+    if (byQuote) return byQuote;
   }
   let doc = await SchoolBulkOrder.findOne({ referenceId: clean });
   if (doc) return doc;
   return await SchoolBulkOrder.findOne({ referenceId: new RegExp(`^${clean}$`, "i") });
 };
+
+// Backwards-compatible alias
+export const findBulkOrderByIdOrReference = findSchoolBulkOrderByIdOrRef;
 
 // Helper to check if requester has administrative privileges
 export const isRequestAdmin = (req) => {
@@ -2290,7 +2295,7 @@ export const deleteSellerSchoolOrder = async (req, res) => {
 export const downloadAdvanceReceipt = async (req, res) => {
   try {
     const { id } = req.params;
-    let bulkOrder = await findBulkOrderByIdOrReference(id);
+    let bulkOrder = await findSchoolBulkOrderByIdOrRef(id);
     if (!bulkOrder) {
       return res.status(404).json({ success: false, message: "School bulk order not found" });
     }
