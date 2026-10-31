@@ -2382,6 +2382,37 @@ export const updateOrder = async (req, res) => {
       });
     }
 
+    // Lifecycle Progression Guard:
+    // 1. Once an order is Confirmed or beyond, disallow moving backwards to Pending
+    const previousRank = STAGE_RANK[previousStatusKey] !== undefined ? STAGE_RANK[previousStatusKey] : 0;
+    const newRank = newStatusKey && STAGE_RANK[newStatusKey] !== undefined ? STAGE_RANK[newStatusKey] : null;
+
+    if (previousRank >= 1 && (newStatusKey === "pending" || newStatusKey === "placed")) {
+      return res.status(400).json({
+        message: `Order is already ${previousStatus}. It cannot be moved backwards to Pending status.`
+      });
+    }
+
+    // 2. Once an order is Shipped/Dispatched, disallow moving backwards to Confirmed/Packed/Pending
+    if (previousRank >= 4 && newRank !== null && newRank < 4 && newStatusKey !== "cancelled") {
+      return res.status(400).json({
+        message: `Order has already been dispatched (${previousStatus}). It cannot be moved backwards in the fulfillment process.`
+      });
+    }
+
+    // 3. Once an order is Delivered or Cancelled, it is final
+    if ((previousStatusKey === "delivered" || previousStatusKey === "completed") && newStatusKey && newStatusKey !== "delivered" && newStatusKey !== "completed") {
+      return res.status(400).json({
+        message: "Order has already been delivered. Completed orders cannot be modified."
+      });
+    }
+
+    if (previousStatusKey === "cancelled" && newStatusKey && newStatusKey !== "cancelled") {
+      return res.status(400).json({
+        message: "Cancelled orders cannot be reopened."
+      });
+    }
+
     const {
       statusTitle,
       statusDescription,
