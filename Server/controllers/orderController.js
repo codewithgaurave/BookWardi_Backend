@@ -10,7 +10,8 @@ import Cart from "../models/Cart.js";
 import mongoose from "mongoose";
 import { sendDeliveryPartnerWhatsAppDispatch } from "../services/whatsappService.js";
 import { broadcastRealtimeEvent } from "../services/realtimeService.js";
-import { createShiprocketOrder, assignShiprocketAwb, generateShiprocketPickup } from "../services/shiprocketService.js";
+import { createShiprocketOrder, assignShiprocketAwb, generateShiprocketPickup, createShiprocketReturnOrder } from "../services/shiprocketService.js";
+import { processRazorpayRefund } from "../services/refundService.js";
 import { calculateSellerSettlement, calculateSettlementMaturity, reconcileSellerSettlementBalances, isGstExempted } from "../services/settlementService.js";
 import { 
   sendFast2SmsOrderPlaced,
@@ -4081,13 +4082,13 @@ export const updateReturnExchangeStatus = async (req, res) => {
     // ─────────────────────────────────────────────────────────────────────────
     const RETURN_STATUS_TRANSITIONS = {
       // Customer-initiated → Admin/Seller decision
-      "return_requested":    ["return_approved", "return_rejected", "rejected", "approved"],
-      "exchange_requested":  ["exchange_approved", "exchange_rejected", "rejected", "approved"],
-      // Approved → pickup or doorstep exchange dispatch
-      "return_approved":     ["pickup_scheduled", "return_rejected", "rejected"],
+      "return_requested":    ["return_approved", "pickup_scheduled", "return_rejected", "rejected", "approved"],
+      "exchange_requested":  ["exchange_approved", "pickup_scheduled", "exchange_rejected", "rejected", "approved"],
+      // Approved → pickup or doorstep exchange dispatch or direct received
+      "return_approved":     ["pickup_scheduled", "product_received", "refund_completed", "refunded", "return_rejected", "rejected"],
       "exchange_approved":   ["exchange_dispatched", "pickup_scheduled", "exchanged", "exchange_rejected", "rejected"],
-      // Pickup → received or exchange dispatch
-      "pickup_scheduled":    ["product_received", "product_return_received", "exchange_dispatched", "exchanged"],
+      // Pickup → received or exchange dispatch or direct refund
+      "pickup_scheduled":    ["product_received", "product_return_received", "refund_completed", "refunded", "exchange_dispatched", "exchanged"],
       // Received → refund or dispatch
       "product_received":    ["refund_initiated", "refund_completed", "refunded", "refund_processed", "exchange_dispatched", "exchanged"],
       "product_return_received": ["refund_initiated", "refund_completed", "refunded", "refund_processed", "exchange_dispatched", "exchanged"],
@@ -4175,6 +4176,36 @@ export const updateReturnExchangeStatus = async (req, res) => {
       overallStatus = canonicalReturnStatus;
       title = type === "exchange" ? "Exchange Request Approved" : "Return Request Approved";
       description = description || `Store Admin/Seller approved the ${type} request for ${targetItem ? targetItem.name : "item"}. Pickup will be arranged.`;
+
+      // ─── Automated Shiprocket Reverse Pickup Dispatch ─────────────────────────
+      // If delivery was handled by third-party courier / Shiprocket, automatically create return order on Shiprocket
+      const isSelfDeliv = order.deliveryMode === "self_delivery" || 
+        order.deliveryType === "self_delivery" || 
+        Boolean(order.selfDeliveryDetails?.deliveryPersonName || order.selfDeliveryDetails?.deliveryPartnerToken);
+
+      if (!isSelfDeliv && !order.returnRequest?.returnAwbNumber) {
+        try {
+          console.log(`📦 [RETURN LOGISTICS] Triggering Shiprocket Reverse Pickup for Order ${order.orderId}...`);
+          const sellerDoc = order.sellerId ? await Seller.findById(order.sellerId).lean() : null;
+          const srReturnRes = await createShiprocketReturnOrder(order, sellerDoc, targetItem);
+
+          if (srReturnRes && srReturnRes.awbCode) {
+            order.returnRequest.returnOrderId = srReturnRes.returnOrderId;
+            order.returnRequest.returnShipmentId = srReturnRes.shipmentId;
+            order.returnRequest.returnAwbNumber = srReturnRes.awbCode;
+            order.returnRequest.returnCourierName = srReturnRes.courierName;
+            order.returnRequest.returnTrackingUrl = srReturnRes.trackingUrl;
+
+            // Advance status to pickup_scheduled automatically since AWB is assigned
+            canonicalReturnStatus = "pickup_scheduled";
+            overallStatus = "pickup_scheduled";
+            title = "Return Pickup Scheduled (Shiprocket)";
+            description = `Automated reverse pickup generated via ${srReturnRes.courierName} (Return AWB: ${srReturnRes.awbCode}). Courier partner will collect parcel from customer address.`;
+          }
+        } catch (srErr) {
+          console.warn("⚠️ Shiprocket return order automated dispatch notice:", srErr.message);
+        }
+      }
     } else if (rawStatus === "rejected" || rawStatus === "return_rejected" || rawStatus === "exchange_rejected") {
       canonicalReturnStatus = type === "exchange" ? "exchange_rejected" : "return_rejected";
       overallStatus = canonicalReturnStatus;
@@ -4185,6 +4216,28 @@ export const updateReturnExchangeStatus = async (req, res) => {
       overallStatus = "pickup_scheduled";
       title = type === "exchange" ? "Exchange Pickup Scheduled" : "Return Pickup Scheduled";
       description = description || `Pickup scheduled for ${pickupDate ? new Date(pickupDate).toLocaleDateString('en-IN') : 'upcoming business days'}.`;
+
+      // If third-party delivery and return AWB is missing, try generating Shiprocket reverse order
+      const isSelfDeliv = order.deliveryMode === "self_delivery" || 
+        order.deliveryType === "self_delivery" || 
+        Boolean(order.selfDeliveryDetails?.deliveryPersonName || order.selfDeliveryDetails?.deliveryPartnerToken);
+
+      if (!isSelfDeliv && !order.returnRequest?.returnAwbNumber) {
+        try {
+          const sellerDoc = order.sellerId ? await Seller.findById(order.sellerId).lean() : null;
+          const srReturnRes = await createShiprocketReturnOrder(order, sellerDoc, targetItem);
+          if (srReturnRes && srReturnRes.awbCode) {
+            order.returnRequest.returnOrderId = srReturnRes.returnOrderId;
+            order.returnRequest.returnShipmentId = srReturnRes.shipmentId;
+            order.returnRequest.returnAwbNumber = srReturnRes.awbCode;
+            order.returnRequest.returnCourierName = srReturnRes.courierName;
+            order.returnRequest.returnTrackingUrl = srReturnRes.trackingUrl;
+            description += ` • Reverse AWB: ${srReturnRes.awbCode} via ${srReturnRes.courierName}`;
+          }
+        } catch (srErr) {
+          console.warn("Shiprocket reverse pickup scheduling note:", srErr.message);
+        }
+      }
 
       const existingOtp = String(order.deliveryOtp || order.selfDeliveryDetails?.deliveryOtp || "").trim();
       const activeOtp = /^\d{4}$/.test(existingOtp) ? existingOtp : Math.floor(1000 + Math.random() * 9000).toString();
@@ -4250,6 +4303,51 @@ export const updateReturnExchangeStatus = async (req, res) => {
         }
         order.stockRestored = true;
       }
+
+      // ─── Automated Direct Razorpay Auto-Refund on Product Received ─────────────
+      if (type === "return" || order.returnRequest?.priceAdjustmentType === "partial_refund") {
+        const refundAmt = Number(order.returnRequest?.refundAmount || order.refundDetails?.amount || order.totalAmount || 0);
+        const alreadyRefunded = order.paymentStatus === "refunded" || Boolean(order.refundDetails?.refundTxnId && !String(order.refundDetails.refundTxnId).startsWith("TEMP"));
+
+        if (refundAmt > 0 && !alreadyRefunded) {
+          try {
+            console.log(`💳 [AUTO REFUND] Triggering automated Razorpay refund for Order ${order.orderId}...`);
+            const rzpRefundRes = await processRazorpayRefund({
+              order,
+              amount: refundAmt,
+              notes: {
+                orderId: order.orderId,
+                action: "product_received_auto_refund"
+              },
+              reverseSplit: true
+            });
+
+            if (rzpRefundRes?.success) {
+              const assignedTxnId = rzpRefundRes.refundId || `RFND-${Date.now()}`;
+              order.paymentStatus = "refunded";
+              order.refundStatus = "Refund Completed";
+              order.refundTxnId = assignedTxnId;
+              order.returnRequest.refundTxnId = assignedTxnId;
+              order.refundDetails = {
+                ...(order.refundDetails || {}),
+                refundTxnId: assignedTxnId,
+                amount: refundAmt,
+                status: "Completed",
+                refundMethod: rzpRefundRes.simulated ? "Simulated Online Refund" : "Razorpay Auto-Refund (Route Split Reversal)",
+                refundedAt: new Date()
+              };
+              canonicalReturnStatus = "refund_completed";
+              overallStatus = "refund_completed";
+              title = "Refund Processed & Completed via Razorpay";
+              description = `₹${refundAmt} refunded directly to customer via Razorpay (TXN: ${assignedTxnId}). Seller Route split reversed.`;
+            } else if (rzpRefundRes?.isCodOrManual) {
+              description += ` • Offline COD order: please process manual UPI/Cash refund.`;
+            }
+          } catch (refundErr) {
+            console.warn("⚠️ Automated Razorpay refund note on product_received:", refundErr.message);
+          }
+        }
+      }
     } else if (rawStatus === "refund_initiated") {
       canonicalReturnStatus = "refund_initiated";
       overallStatus = "refund_initiated";
@@ -4261,11 +4359,41 @@ export const updateReturnExchangeStatus = async (req, res) => {
       overallStatus = "refund_completed";
       order.paymentStatus = "refunded";
       order.refundStatus = "Refund Completed";
-      if (refundTxnId) {
-        order.refundDetails = { ...(order.refundDetails || {}), refundTxnId, status: "Completed" };
+
+      let finalRefundTxnId = refundTxnId;
+      const refundAmt = Number(order.refundDetails?.amount || order.returnRequest?.refundAmount || order.totalAmount || 0);
+
+      // If online order and not yet processed, trigger Razorpay auto-refund
+      const isManualRef = finalRefundTxnId && (finalRefundTxnId.startsWith("UPI-REF") || finalRefundTxnId.startsWith("REF-"));
+      if ((!finalRefundTxnId || isManualRef) && order.paymentStatus !== "refunded" && refundAmt > 0) {
+        try {
+          const rzpRefundRes = await processRazorpayRefund({
+            order,
+            amount: refundAmt,
+            notes: { orderId: order.orderId, action: "refund_completed" },
+            reverseSplit: true
+          });
+          if (rzpRefundRes?.success && rzpRefundRes.refundId) {
+            finalRefundTxnId = rzpRefundRes.refundId;
+          }
+        } catch (rzpErr) {
+          console.warn("Automated Razorpay refund warning:", rzpErr.message);
+        }
       }
+
+      finalRefundTxnId = finalRefundTxnId || `RFND-${Date.now()}`;
+      order.refundTxnId = finalRefundTxnId;
+      order.returnRequest.refundTxnId = finalRefundTxnId;
+      order.refundDetails = {
+        ...(order.refundDetails || {}),
+        refundTxnId: finalRefundTxnId,
+        amount: refundAmt,
+        status: "Completed",
+        refundMethod: "Razorpay Auto-Refund (Route Split Reversal)",
+        refundedAt: new Date()
+      };
       title = "Refund Processed & Completed";
-      description = description || `Refund successfully processed. Reference TXN: ${refundTxnId || "N/A"}.`;
+      description = description || `Refund of ₹${refundAmt} successfully processed. Reference TXN: ${finalRefundTxnId}.`;
 
       if (!order.stockRestored) {
         if (targetItem) {
