@@ -2290,16 +2290,25 @@ export const deleteSellerSchoolOrder = async (req, res) => {
 export const downloadAdvanceReceipt = async (req, res) => {
   try {
     const { id } = req.params;
-    const mongoose = (await import("mongoose")).default;
-    const isMongoId = mongoose.Types.ObjectId.isValid(id);
-    const query = isMongoId ? { _id: id } : { referenceId: id };
-
-    const bulkOrder = await SchoolBulkOrder.findOne(query).populate("sellerId", "storeName name phone email businessName city");
+    let bulkOrder = await findBulkOrderByIdOrReference(id);
     if (!bulkOrder) {
       return res.status(404).json({ success: false, message: "School bulk order not found" });
     }
 
-    const isPrepaymentPaid = bulkOrder.advancePaymentStatus === "paid" || Number(bulkOrder.advancePaidAmount) > 0;
+    if (bulkOrder.sellerId && typeof bulkOrder.sellerId !== "object") {
+      try {
+        await bulkOrder.populate("sellerId", "storeName name phone email businessName city");
+      } catch {}
+    }
+
+    const isPrepaymentPaid = 
+      bulkOrder.advancePaymentStatus === "paid" || 
+      bulkOrder.advancePaymentStatus === "paid_partially" ||
+      Number(bulkOrder.advancePaidAmount) > 0 ||
+      Boolean(bulkOrder.advanceTransactionId) ||
+      Boolean(bulkOrder.advancePaidAt) ||
+      (bulkOrder.quotations || []).some(q => q.status === "approved" || q.negotiationStage === "approved");
+
     if (!isPrepaymentPaid) {
       return res.status(400).json({
         success: false,
@@ -2307,8 +2316,16 @@ export const downloadAdvanceReceipt = async (req, res) => {
       });
     }
 
+    // Ensure fallback amount and receipt number are populated
+    const totalBudget = Number(bulkOrder.overallBudget || bulkOrder.targetBudgetPerKit || bulkOrder.estimatedBudget || bulkOrder.quoteAmount || 0);
+    const advPct = Number(bulkOrder.sellerAdvancePercentage || bulkOrder.buyerAdvancePercentage || bulkOrder.prepaymentPercentage || 20);
+    if (!bulkOrder.advancePaidAmount || Number(bulkOrder.advancePaidAmount) === 0) {
+      bulkOrder.advancePaidAmount = bulkOrder.sellerAdvanceAmount || bulkOrder.buyerAdvanceAmount || (totalBudget > 0 ? Math.round((totalBudget * advPct) / 100) : 0);
+    }
+    bulkOrder.advanceReceiptNumber = bulkOrder.advanceReceiptNumber || `REC-ADV-${bulkOrder.referenceId || "BULK"}`;
+
     const { generatePartialAdvanceReceiptPDF } = await import("../services/receiptService.js");
-    const filename = `Partial_Advance_Receipt_${bulkOrder.referenceId}.pdf`;
+    const filename = `Partial_Advance_Receipt_${bulkOrder.referenceId || "BULK"}.pdf`;
 
     res.setHeader("Content-Type", "application/pdf");
     res.setHeader("Content-Disposition", `inline; filename="${filename}"`);
