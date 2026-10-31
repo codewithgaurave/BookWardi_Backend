@@ -470,9 +470,12 @@ export const formatSellerSingleOrder = (o, scope = null) => {
     invoiceNumber: o.invoiceNumber || formatSellerInvoiceNumber(getSellerInvoicePrefix(scope?.storeName || o.sellerStoreName), 1),
     sellerInvoiceNo: o.sellerInvoiceNo || o.invoiceNumber || formatSellerInvoiceNumber(getSellerInvoicePrefix(scope?.storeName || o.sellerStoreName), 1),
     sellerSequence: o.sellerSequence || 1,
+    customer: customerObj,
     customerName: customerObj.name || o.userName || o.customerName || "Customer",
     customerEmail: customerObj.email || o.userEmail || o.customerEmail || "",
     customerPhone: customerObj.phone || o.userPhone || o.customerPhone || "",
+    rawShippingAddress: shippingAddressObj,
+    shippingAddressObj: shippingAddressObj,
     school: o.schoolName || o.school || customerObj.school || "General Public",
     date: o.date
       ? o.date
