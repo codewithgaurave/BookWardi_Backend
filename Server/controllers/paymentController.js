@@ -240,9 +240,9 @@ export const verifyPayment = async (req, res) => {
         {
           $set: {
             paymentStatus: "paid",
-            overallStatus: "Confirmed",
-            status: "Confirmed",
-            "items.$[].status": "confirmed",
+            overallStatus: "Pending",
+            status: "Pending",
+            "items.$[].status": "pending",
             razorpayPaymentId: razorpay_payment_id,
             razorpayOrderId: razorpay_order_id
           }
@@ -259,7 +259,7 @@ export const verifyPayment = async (req, res) => {
             masterOrderId: updatedOrder.masterOrderId,
             sellerId: updatedOrder.sellerId,
             total: updatedOrder.totalAmount,
-            status: "Confirmed",
+            status: "Pending",
             paymentStatus: "paid"
           });
 
@@ -272,29 +272,6 @@ export const verifyPayment = async (req, res) => {
             sendFast2SmsPaymentSuccess(targetPhone, paidAmt, displayOrderId).catch(err => {
               console.warn("⚠️ [FAST2SMS] Payment success SMS error:", err.message);
             });
-
-            // Template 225934: Your BOOK VARDI order {#VAR#} has been confirmed successfully -BOOK VARDI
-            if (!updatedOrder.orderConfirmationSmsSent) {
-              sendFast2SmsOrderConfirmation(targetPhone, displayOrderId)
-                .then(async (smsRes) => {
-                  if (smsRes?.success) {
-                    console.log(`📲 [FAST2SMS] Order confirmation SMS sent to +91 ${targetPhone} for Order ${displayOrderId}`);
-                    await Order.updateOne(
-                      { _id: updatedOrder._id },
-                      {
-                        $set: {
-                          orderConfirmationSmsSent: true,
-                          orderConfirmationSmsSentAt: new Date(),
-                          orderConfirmationSmsRequestId: smsRes.requestId
-                        }
-                      }
-                    ).catch(() => {});
-                  }
-                })
-                .catch((smsErr) => {
-                  console.warn("⚠️ [FAST2SMS] Order confirmation SMS dispatch error:", smsErr.message);
-                });
-            }
           }
         }
       } catch (rtErr) {}
