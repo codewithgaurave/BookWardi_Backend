@@ -224,9 +224,45 @@ export const getDeliveryPartnerOrder = async (req, res) => {
       subtotal: order.subtotal || (order.items || []).reduce((s, it) => s + (Number(it.finalPrice || it.price || 0) * Number(it.quantity || 1)), 0),
       shippingFee: order.shippingFee !== undefined ? order.shippingFee : (order.shippingCost !== undefined ? order.shippingCost : 0),
       shippingCost: order.shippingCost !== undefined ? order.shippingCost : (order.shippingFee !== undefined ? order.shippingFee : 0),
-      codFee: order.codFee !== undefined ? order.codFee : (order.appliedCodFee !== undefined ? order.appliedCodFee : (order.codCharges || 0)),
-      appliedCodFee: order.appliedCodFee !== undefined ? order.appliedCodFee : (order.codFee !== undefined ? order.codFee : (order.codCharges || 0)),
-      codCharges: order.codCharges || order.codFee || order.appliedCodFee || 0,
+      codFee: (() => {
+        let c = order.codFee !== undefined ? order.codFee : (order.appliedCodFee !== undefined ? order.appliedCodFee : (order.codCharges || 0));
+        if ((!c || c <= 0) && /cod|cash\s*on\s*delivery/i.test(String(order.paymentMethod || ''))) {
+          const s = Number(order.subtotal || 0);
+          const ship = Number(order.shippingFee ?? order.shippingCost ?? 0);
+          const tot = Number(order.totalAmount || order.total || 0);
+          const disc = Number(order.discount || order.discountAmount || 0);
+          if (tot > (s + ship - disc)) {
+            c = Math.round((tot - (s + ship - disc)) * 100) / 100;
+          }
+        }
+        return Number(c) || 0;
+      })(),
+      appliedCodFee: (() => {
+        let c = order.appliedCodFee !== undefined ? order.appliedCodFee : (order.codFee !== undefined ? order.codFee : (order.codCharges || 0));
+        if ((!c || c <= 0) && /cod|cash\s*on\s*delivery/i.test(String(order.paymentMethod || ''))) {
+          const s = Number(order.subtotal || 0);
+          const ship = Number(order.shippingFee ?? order.shippingCost ?? 0);
+          const tot = Number(order.totalAmount || order.total || 0);
+          const disc = Number(order.discount || order.discountAmount || 0);
+          if (tot > (s + ship - disc)) {
+            c = Math.round((tot - (s + ship - disc)) * 100) / 100;
+          }
+        }
+        return Number(c) || 0;
+      })(),
+      codCharges: (() => {
+        let c = order.codCharges || order.codFee || order.appliedCodFee || 0;
+        if ((!c || c <= 0) && /cod|cash\s*on\s*delivery/i.test(String(order.paymentMethod || ''))) {
+          const s = Number(order.subtotal || 0);
+          const ship = Number(order.shippingFee ?? order.shippingCost ?? 0);
+          const tot = Number(order.totalAmount || order.total || 0);
+          const disc = Number(order.discount || order.discountAmount || 0);
+          if (tot > (s + ship - disc)) {
+            c = Math.round((tot - (s + ship - disc)) * 100) / 100;
+          }
+        }
+        return Number(c) || 0;
+      })(),
       discount: order.discount || order.discountAmount || 0,
       discountAmount: order.discountAmount || order.discount || 0,
       gst: order.gst || order.taxAmount || 0,
