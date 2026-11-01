@@ -143,6 +143,8 @@ const orderItemSchema = new mongoose.Schema({
       "credited", 
       "settled", 
       "matured",
+      "cancelled",
+      "paid_out",
       "refunded", 
       "on_hold"
     ], 
@@ -374,8 +376,29 @@ const orderSchema = new mongoose.Schema(
     },
     settlementStatus: {
       type: String,
-      enum: ["pending", "pending_return_window", "in_return_window", "credited", "settled", "refunded", "on_hold"],
+      enum: [
+        "pending",
+        "pending_return_window",
+        "in_return_window",
+        "pending_exchange_buffer",
+        "in_exchange_buffer",
+        "credited",
+        "settled",
+        "matured",
+        "refunded",
+        "cancelled",
+        "paid_out",
+        "on_hold"
+      ],
       default: "pending"
+    },
+    settlementRule: {
+      type: String,
+      default: "ONLINE_SELF_DELIVERY"
+    },
+    isSettlementMatured: {
+      type: Boolean,
+      default: false
     },
     codCollectedAt: {
       type: Date,
