@@ -3,7 +3,7 @@ import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 import { isGstExempted } from "./settlementService.js";
-import { getSellerInvoicePrefix, formatSellerInvoiceNumber, formatSellerCreditNoteNumber, getSellerCreditNoteNumber } from "../utils/invoiceHelper.js";
+import { getSellerInvoicePrefix, formatSellerInvoiceNumber, formatSellerCreditNoteNumber, getSellerCreditNoteNumber, getSellerExchangeInvoiceNumber } from "../utils/invoiceHelper.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -1134,6 +1134,8 @@ export const generateTaxInvoicePDF = (order, filterSellerId = null, options = {}
   }
 
   // Dedicated COD Charges Line Item (if Cash on Delivery order)
+  const isCod = Boolean(String(order.paymentMethod || '').toLowerCase().includes('cod') || String(order.paymentMethod || '').toLowerCase().includes('cash'));
+
   const rawCodFee = Number(order.codFee ?? order.codCharges ?? order.appliedCodFee ?? order.settlement?.codChargeAmount ?? 0);
   const effectiveCodFeeInTotal = (isCod && rawCodFee > 0) ? rawCodFee : 0;
   if (effectiveCodFeeInTotal > 0) {
@@ -1262,7 +1264,7 @@ export const generateTaxInvoicePDF = (order, filterSellerId = null, options = {}
   const isOrderRefunded = String(order.overallStatus || order.status || '').toLowerCase().includes('refund') || String(order.returnRequest?.status || '').toLowerCase().includes('refund') || order.settlementStatus === 'refunded';
   const isSettlementReversed = isOrderCancelled || isOrderRefunded;
 
-  const isCod = String(order.paymentMethod || '').toLowerCase().includes('cod') || String(order.paymentMethod || '').toLowerCase().includes('cash');
+
   const isRule3CodSelf = isCod && isSelf;
   const isRule4CodCourier = isCod && isThirdParty;
   const isRule2OnlineCourier = !isCod && isThirdParty;
@@ -2324,7 +2326,14 @@ export const generateExchangeInvoicePDF = (order, filterSellerId = null, options
     : (order.sellerInvoiceNo && !order.sellerInvoiceNo.startsWith("INV-"))
       ? order.sellerInvoiceNo
       : formatSellerInvoiceNumber(exchPrefix, order.sellerSequence || 1);
-  const exchangeInvoiceNo = `EXCH-${originalInvoiceNo}`;
+  const exchangeInvoiceNo = (order.exchangeInvoiceNumber && !order.exchangeInvoiceNumber.startsWith("EXCH-") && !order.exchangeInvoiceNumber.startsWith("INV-"))
+    ? order.exchangeInvoiceNumber
+    : (order.sellerExchangeInvoiceNo && !order.sellerExchangeInvoiceNo.startsWith("EXCH-"))
+      ? order.sellerExchangeInvoiceNo
+      : getSellerExchangeInvoiceNumber(order, filterSellerId);
+  const creditNoteNo = (order.creditNoteNumber && !order.creditNoteNumber.startsWith("CN-INV-"))
+    ? order.creditNoteNumber
+    : getSellerCreditNoteNumber(order, filterSellerId);
 
   const exchangeDateRaw = order.returnRequest?.updatedAt || order.returnRequest?.requestedAt || order.updatedAt || order.createdAt;
   const exchangeDateStr = new Date(exchangeDateRaw).toLocaleDateString("en-IN", {
@@ -2383,7 +2392,7 @@ export const generateExchangeInvoicePDF = (order, filterSellerId = null, options
     .text(`Invoice No: ${exchangeInvoiceNo}`, 260, 70, { width: 295, align: "right" })
     .font("Helvetica")
     .fillColor(mutedColor)
-    .text(`Original Ref: ${originalInvoiceNo} (Dated: ${originalOrderDateStr})`, 260, 82, { width: 295, align: "right" })
+    .text(`Original Ref: ${originalInvoiceNo} (Credit Note: ${creditNoteNo})`, 260, 82, { width: 295, align: "right" })
     .text(`Date of Replacement: ${exchangeDateStr}`, 260, 94, { width: 295, align: "right" });
 
   // 2. SELLER & CUSTOMER SECTION (Modern Cards)

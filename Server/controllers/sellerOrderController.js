@@ -401,7 +401,19 @@ export const formatSellerSingleOrder = (o, scope = null) => {
       )
     : (sellerComputedStatus || sellerItemStatus || o.overallStatus || o.status || "Pending");
 
-  const formattedStatus = normalizeOrderStatus(rawStatus, o);
+  // Dynamic Rule: Order confirmation happens strictly on delivery partner selection, not before!
+  const hasDeliveryPartner = Boolean(
+    (o.deliveryMode === "self_delivery" || o.deliveryMode === "third_party") ||
+    (o.courierName && o.courierName !== "N/A" && o.courierName !== "") ||
+    Boolean(o.selfDeliveryDetails?.deliveryPartnerToken || o.selfDeliveryDetails?.deliveryPersonName) ||
+    Boolean(orderItems[0]?.thirdPartyDetails?.courierName)
+  );
+  const isTerminalOrDispatched = ["shipped", "in_transit", "out_for_delivery", "delivered", "completed", "cancelled", "refunded"].includes(String(rawStatus).toLowerCase().trim().replace(/[\s-]+/g, '_'));
+  const effectiveRawStatus = (!hasActiveReturnRequest && !isTerminalOrDispatched && !hasDeliveryPartner && String(rawStatus).toLowerCase().includes("confirm"))
+    ? "Pending"
+    : rawStatus;
+
+  const formattedStatus = normalizeOrderStatus(effectiveRawStatus, o);
 
   let rawOrderId = o.orderId || o.id;
   if (!rawOrderId || /^[0-9a-fA-F]{24}$/.test(rawOrderId)) {
@@ -470,6 +482,12 @@ export const formatSellerSingleOrder = (o, scope = null) => {
     invoiceNumber: o.invoiceNumber || formatSellerInvoiceNumber(getSellerInvoicePrefix(scope?.storeName || o.sellerStoreName), 1),
     sellerInvoiceNo: o.sellerInvoiceNo || o.invoiceNumber || formatSellerInvoiceNumber(getSellerInvoicePrefix(scope?.storeName || o.sellerStoreName), 1),
     sellerSequence: o.sellerSequence || 1,
+    creditNoteNumber: o.creditNoteNumber || o.sellerCreditNoteNo || "",
+    sellerCreditNoteNo: o.sellerCreditNoteNo || o.creditNoteNumber || "",
+    sellerCreditNoteSequence: o.sellerCreditNoteSequence || 0,
+    exchangeInvoiceNumber: o.exchangeInvoiceNumber || o.sellerExchangeInvoiceNo || "",
+    sellerExchangeInvoiceNo: o.sellerExchangeInvoiceNo || o.exchangeInvoiceNumber || "",
+    sellerExchangeSequence: o.sellerExchangeSequence || 0,
     customer: customerObj,
     customerName: customerObj.name || o.userName || o.customerName || "Customer",
     customerEmail: customerObj.email || o.userEmail || o.customerEmail || "",
@@ -862,7 +880,7 @@ export const updateSellerOrderItemStatus = async (req, res) => {
     const validModes = ["third_party", "self_delivery", "pending_choice", "standard", "express", ""];
     const resolvedMode = validModes.includes(rawMode) ? rawMode : "pending_choice";
 
-    const formattedStatus = status
+    let formattedStatus = status
       ? normalizeOrderStatus(status)
       : normalizeOrderStatus(item.status || order.status || "Pending");
 
@@ -1071,7 +1089,7 @@ export const updateSellerOrderStatus = async (req, res) => {
       });
     }
 
-    const formattedStatus = status
+    let formattedStatus = status
       ? normalizeOrderStatus(status)
       : normalizeOrderStatus(order.status || "Pending");
 
@@ -1084,6 +1102,31 @@ export const updateSellerOrderStatus = async (req, res) => {
     const validModes = ["third_party", "self_delivery", "pending_choice", "standard", "express", ""];
     const resolvedMode = validModes.includes(rawMode) ? rawMode : "pending_choice";
     order.deliveryMode = resolvedMode;
+
+    const isPartnerSelected = (resolvedMode === "self_delivery" && Boolean(selfDeliveryDetails?.deliveryPersonName || order.selfDeliveryDetails?.deliveryPersonName || selfDeliveryDetails?.deliveryPartnerToken)) ||
+      (resolvedMode === "third_party" && Boolean(courierName || order.courierName || trackingNumber || order.trackingNumber)) ||
+      Boolean(order.courierName && order.courierName !== "N/A" && order.courierName !== "") ||
+      Boolean(order.selfDeliveryDetails?.deliveryPersonName || order.selfDeliveryDetails?.deliveryPartnerToken);
+
+    if ((status === "Confirmed" || status === "Packed") && !isPartnerSelected && resolvedMode === "pending_choice") {
+      return res.status(400).json({
+        success: false,
+        message: "Order confirmation requires delivery partner selection. Please choose Self-Delivery or 3rd-Party Courier."
+      });
+    }
+
+    // Dynamic Rule: If order was Pending and a delivery partner is now selected, auto-confirm the order!
+    const curStatusStr = String(order.overallStatus || order.status || "").toLowerCase().trim();
+    let effectiveTargetStatus = status;
+    if ((curStatusStr === "pending" || curStatusStr === "placed") && isPartnerSelected) {
+      if (!status || status === "Pending") {
+        effectiveTargetStatus = "Confirmed";
+      }
+    }
+
+    formattedStatus = effectiveTargetStatus
+      ? normalizeOrderStatus(effectiveTargetStatus)
+      : formattedStatus;
 
     let computedTrackingUrl = trackingUrl || "";
     let effectiveAwb = "";
@@ -1600,11 +1643,7 @@ export const downloadSellerCreditNote = async (req, res) => {
     }
 
     const { generateCreditNotePDF } = await import("../services/invoiceService.js");
-    const isExchangeOrder = String(enrichedOrder.returnRequest?.type || enrichedOrder.returnRequest?.requestType || '').toLowerCase() === 'exchange' ||
-      String(enrichedOrder.overallStatus || enrichedOrder.status || '').toLowerCase().includes('exchange');
-    const filename = isExchangeOrder
-      ? `Seller_ExchangeInvoice_${enrichedOrder.orderId || enrichedOrder._id}.pdf`
-      : `Seller_CreditNote_${enrichedOrder.orderId || enrichedOrder._id}.pdf`;
+    const filename = `Seller_CreditNote_${enrichedOrder.orderId || enrichedOrder._id}.pdf`;
     res.setHeader("Content-Type", "application/pdf");
     res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
 

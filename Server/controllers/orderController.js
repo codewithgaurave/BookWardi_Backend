@@ -845,9 +845,23 @@ export const enrichOrdersWithSellerAndConsumer = async (orders) => {
         ord.sellerGst = primarySellerDetails.gstNumber || ord.sellerGst || "";
       }
 
-      // Canonicalize status across overall order and individual items
-      ord.overallStatus = normalizeOrderStatus(ord.overallStatus || ord.status);
-      ord.status = ord.overallStatus;
+      // Canonicalize status across overall order and individual items (Order confirmation requires delivery partner)
+      const hasDeliveryPartner = Boolean(
+        (ord.deliveryMode === "self_delivery" || ord.deliveryMode === "third_party") ||
+        (ord.courierName && ord.courierName !== "N/A" && ord.courierName !== "") ||
+        Boolean(ord.selfDeliveryDetails?.deliveryPartnerToken || ord.selfDeliveryDetails?.deliveryPersonName) ||
+        Boolean(ord.items?.[0]?.thirdPartyDetails?.courierName)
+      );
+      const isTerminalOrDispatched = ["shipped", "in_transit", "out_for_delivery", "delivered", "completed", "cancelled", "refunded"].includes(String(ord.overallStatus || ord.status || "").toLowerCase().trim().replace(/[\s-]+/g, '_'));
+      const hasActiveRet = ord.returnRequest && ord.returnRequest.type && !['none', 'no_request', ''].includes(String(ord.returnRequest.status).toLowerCase());
+
+      if (!hasActiveRet && !isTerminalOrDispatched && !hasDeliveryPartner && String(ord.overallStatus || ord.status || "").toLowerCase().includes("confirm")) {
+        ord.overallStatus = "Pending";
+        ord.status = "Pending";
+      } else {
+        ord.overallStatus = normalizeOrderStatus(ord.overallStatus || ord.status);
+        ord.status = ord.overallStatus;
+      }
       if (ord.items && Array.isArray(ord.items)) {
         ord.items.forEach(item => {
           item.status = normalizeOrderStatus(item.status || ord.overallStatus);
@@ -2379,8 +2393,35 @@ export const updateOrder = async (req, res) => {
     const previousStatusKey = String(previousStatus || '').toLowerCase().trim().replace(/[\s-]+/g, "_");
 
     const rawNewStatus = req.body.overallStatus || req.body.status;
-    const newStatusKey = rawNewStatus ? String(rawNewStatus).toLowerCase().trim().replace(/[\s-]+/g, "_") : null;
-    const canonicalStatus = rawNewStatus ? normalizeOrderStatus(rawNewStatus) : null;
+    let newStatusKey = rawNewStatus ? String(rawNewStatus).toLowerCase().trim().replace(/[\s-]+/g, "_") : null;
+    let canonicalStatus = rawNewStatus ? normalizeOrderStatus(rawNewStatus) : null;
+
+    const isConfirming = newStatusKey === "confirmed" || newStatusKey === "packed";
+    const hasIncomingPartner = Boolean(
+      (req.body.deliveryMode === 'self_delivery' || req.body.deliveryType === 'self_delivery' || req.body.deliveryMode === 'third_party' || req.body.deliveryType === 'third_party') ||
+      (req.body.courierName && req.body.courierName !== 'N/A') ||
+      req.body.trackingNumber ||
+      req.body.selfDeliveryDetails?.deliveryPersonName ||
+      req.body.selfDeliveryDetails?.deliveryPartnerToken
+    );
+    const hasExistingPartner = Boolean(
+      (existingOrder.deliveryMode === 'self_delivery' || existingOrder.deliveryMode === 'third_party') ||
+      (existingOrder.courierName && existingOrder.courierName !== 'N/A' && existingOrder.courierName !== '') ||
+      existingOrder.selfDeliveryDetails?.deliveryPersonName ||
+      existingOrder.selfDeliveryDetails?.deliveryPartnerToken
+    );
+
+    if (isConfirming && !hasIncomingPartner && !hasExistingPartner) {
+      return res.status(400).json({
+        message: "Order confirmation requires delivery partner selection. Please choose Self-Delivery or 3rd-Party Courier before confirming."
+      });
+    }
+
+    // Dynamic Rule: If order was Pending and a delivery partner is now selected, auto-promote status to Confirmed!
+    if (hasIncomingPartner && (previousStatusKey === "pending" || previousStatusKey === "placed") && (!rawNewStatus || newStatusKey === "pending")) {
+      canonicalStatus = "Confirmed";
+      newStatusKey = "confirmed";
+    }
 
     // Guard against bypassing sequential return/exchange workflow via generic updateOrder
     const returnRestrictedStatuses = [
@@ -3542,11 +3583,7 @@ export const downloadCreditNote = async (req, res) => {
     }
 
     const { generateCreditNotePDF } = await import("../services/invoiceService.js");
-    const isExchangeOrder = String(enrichedOrder.returnRequest?.type || enrichedOrder.returnRequest?.requestType || '').toLowerCase() === 'exchange' ||
-      String(enrichedOrder.overallStatus || enrichedOrder.status || '').toLowerCase().includes('exchange');
-    const filename = isExchangeOrder
-      ? `ExchangeInvoice_${enrichedOrder.orderId || enrichedOrder._id}.pdf`
-      : `CreditNote_${enrichedOrder.orderId || enrichedOrder._id}.pdf`;
+    const filename = `CreditNote_${enrichedOrder.orderId || enrichedOrder._id}.pdf`;
 
     res.setHeader("Content-Type", "application/pdf");
     res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
@@ -4116,7 +4153,7 @@ export const updateReturnExchangeStatus = async (req, res) => {
       "refund_completed":    [],
       "refunded":            [],
       "refund_processed":    [],
-      "exchanged":           [],
+      "exchanged":           ["exchanged", "refund_completed"],
     };
 
     const currentRetStatus = String(order.returnRequest.status || "").toLowerCase().trim().replace(/[\s-]+/g, "_");
@@ -4551,6 +4588,26 @@ export const updateReturnExchangeStatus = async (req, res) => {
           it.isSettlementMatured = false;
         });
       }
+
+      // Handle customer partial refund if provided for exchange
+      if (refundTxnId) {
+        order.returnRequest.refundTxnId = refundTxnId;
+        order.returnRequest.refundStatus = "completed";
+        const refundAmt = Number(req.body.refundAmount) || order.returnRequest.refundAmount || Math.abs(Number(order.returnRequest.priceDifference || 0));
+        if (refundAmt > 0) {
+          order.returnRequest.refundAmount = refundAmt;
+        }
+        order.refundTxnId = refundTxnId;
+        order.refundStatus = "Refund Completed";
+        order.refundDetails = {
+          ...(order.refundDetails || {}),
+          refundTxnId: refundTxnId,
+          amount: refundAmt || order.refundDetails?.amount || 0,
+          status: "Completed",
+          refundMethod: order.returnRequest.refundDetails?.bankName ? "Direct Bank Transfer (NEFT/IMPS/UPI)" : "Online / Bank Transfer",
+          refundedAt: new Date()
+        };
+      }
     } else {
       canonicalReturnStatus = rawStatus;
       overallStatus = rawStatus;
@@ -4618,7 +4675,24 @@ export const updateReturnExchangeStatus = async (req, res) => {
 
     if (rejectionReason) order.returnRequest.rejectionReason = rejectionReason;
     if (pickupDate) order.returnRequest.pickupDate = new Date(pickupDate);
-    if (refundTxnId) order.returnRequest.refundTxnId = refundTxnId;
+    if (refundTxnId) {
+      order.returnRequest.refundTxnId = refundTxnId;
+      order.returnRequest.refundStatus = "completed";
+      order.refundTxnId = refundTxnId;
+      order.refundStatus = "Refund Completed";
+      const refAmt = Number(req.body.refundAmount) || order.returnRequest.refundAmount || Math.abs(Number(order.returnRequest.priceDifference || 0));
+      if (refAmt > 0) {
+        order.returnRequest.refundAmount = refAmt;
+      }
+      order.refundDetails = {
+        ...(order.refundDetails || {}),
+        refundTxnId: refundTxnId,
+        amount: refAmt || order.refundDetails?.amount || 0,
+        status: "Completed",
+        refundMethod: order.returnRequest.refundDetails?.bankName ? "Direct Bank Transfer (NEFT/IMPS/UPI)" : "Online / Bank Transfer",
+        refundedAt: new Date()
+      };
+    }
     if (exchangeAwb) order.returnRequest.exchangeAwb = exchangeAwb;
     if (exchangeCourier) order.returnRequest.exchangeCourier = exchangeCourier;
 
@@ -4683,7 +4757,7 @@ export const updateReturnExchangeStatus = async (req, res) => {
               if (res?.success) console.log(`📲 [FAST2SMS] Return/Exchange approved SMS sent to +91 ${cleanCustPhone} for Order ${order.orderId}`);
             })
             .catch(() => {});
-        } else if (rawStatus === "refund_completed" || rawStatus === "refund_processed" || rawStatus === "refunded") {
+        } else if (rawStatus === "refund_completed" || rawStatus === "refund_processed" || rawStatus === "refunded" || (canonicalReturnStatus === "exchanged" && refundTxnId)) {
           const refAmt = Number(order.refundDetails?.amount || order.returnRequest?.refundAmount || order.totalAmount || 0);
           sendFast2SmsRefundProcessed(cleanCustPhone, refAmt, order.orderId, refundTxnId)
             .then(res => {

@@ -4,6 +4,7 @@ import SchoolBulkOrder from "../models/SchoolBulkOrder.js";
 import { broadcastRealtimeEvent } from "../services/realtimeService.js";
 import { calculateSellerSettlement, calculateSettlementMaturity, reconcileSellerSettlementBalances } from "../services/settlementService.js";
 import { sendFast2SmsOtp, sendFast2SmsOrderDelivered, sendFast2SmsExchangeOtp, sendFast2SmsReturnOtp } from "../services/smsService.js";
+import { getSellerInvoicePrefix, formatSellerInvoiceNumber, formatSellerCreditNoteNumber } from "../utils/invoiceHelper.js";
 
 // Helper to locate order or bulk requisition by token or ID
 const findOrderByTokenOrId = async (tokenOrId) => {
@@ -204,13 +205,22 @@ export const getDeliveryPartnerOrder = async (req, res) => {
     };
 
     const isExchangeOrder = Boolean(
-      order.returnRequest?.type === 'exchange' ||
-      String(order.overallStatus || order.status || '').toLowerCase().includes('exchange')
+      order.isExchangeTask ||
+      String(order.returnRequest?.type || order.returnRequest?.requestType || '').toLowerCase() === 'exchange' ||
+      Boolean(order.returnRequest?.exchangeSize || order.returnRequest?.exchangeLength || order.returnRequest?.exchangeColor) ||
+      String(order.returnRequest?.status || '').toLowerCase().includes('exchange') ||
+      String(order.overallStatus || order.status || '').toLowerCase().includes('exchange') ||
+      String(order.deliveryStatus || '').toLowerCase().includes('swap') ||
+      String(order.selfDeliveryDetails?.status || '').toLowerCase().includes('swap')
     );
-    const isReturnOrder = Boolean(
-      order.returnRequest?.type === 'return' ||
-      (!isExchangeOrder && Boolean(order.returnRequest?.type || order.returnRequest?.reason)) ||
+    const isReturnOrder = !isExchangeOrder && Boolean(
+      order.isReturnTask ||
+      String(order.returnRequest?.type || order.returnRequest?.requestType || '').toLowerCase() === 'return' ||
+      Boolean(order.returnRequest?.type || order.returnRequest?.reason) ||
+      String(order.returnRequest?.status || '').toLowerCase().includes('return') ||
+      String(order.returnRequest?.status || '').toLowerCase().includes('refund') ||
       String(order.overallStatus || order.status || '').toLowerCase().includes('return') ||
+      String(order.overallStatus || order.status || '').toLowerCase().includes('refund') ||
       String(order.overallStatus || order.status || '').toLowerCase().includes('pickup')
     );
 
@@ -411,13 +421,22 @@ export const resendCustomerDeliveryOtp = async (req, res) => {
 
     const order = lookup.order;
     const isExchangeOrder = Boolean(
-      order.returnRequest?.type === 'exchange' ||
-      String(order.overallStatus || order.status || '').toLowerCase().includes('exchange')
+      order.isExchangeTask ||
+      String(order.returnRequest?.type || order.returnRequest?.requestType || '').toLowerCase() === 'exchange' ||
+      Boolean(order.returnRequest?.exchangeSize || order.returnRequest?.exchangeLength || order.returnRequest?.exchangeColor) ||
+      String(order.returnRequest?.status || '').toLowerCase().includes('exchange') ||
+      String(order.overallStatus || order.status || '').toLowerCase().includes('exchange') ||
+      String(order.deliveryStatus || '').toLowerCase().includes('swap') ||
+      String(order.selfDeliveryDetails?.status || '').toLowerCase().includes('swap')
     );
-    const isReturnOrder = Boolean(
-      order.returnRequest?.type === 'return' ||
-      (!isExchangeOrder && Boolean(order.returnRequest?.type || order.returnRequest?.reason)) ||
+    const isReturnOrder = !isExchangeOrder && Boolean(
+      order.isReturnTask ||
+      String(order.returnRequest?.type || order.returnRequest?.requestType || '').toLowerCase() === 'return' ||
+      Boolean(order.returnRequest?.type || order.returnRequest?.reason) ||
+      String(order.returnRequest?.status || '').toLowerCase().includes('return') ||
+      String(order.returnRequest?.status || '').toLowerCase().includes('refund') ||
       String(order.overallStatus || order.status || '').toLowerCase().includes('return') ||
+      String(order.overallStatus || order.status || '').toLowerCase().includes('refund') ||
       String(order.overallStatus || order.status || '').toLowerCase().includes('pickup')
     );
 
@@ -499,7 +518,7 @@ export const resendCustomerDeliveryOtp = async (req, res) => {
 
     const rawCustomerPhone = order.customer?.phone || order.shippingAddress?.phone || order.phone || "";
     const cleanPhone = String(rawCustomerPhone).replace(/\D/g, "").slice(-10);
-    const taskTypeName = isReturnOrder ? "Return Pickup OTP" : (isExchangeOrder ? "Exchange Delivery OTP" : "Delivery OTP");
+    const taskTypeName = isExchangeOrder ? "Exchange Delivery OTP" : (isReturnOrder ? "Return Pickup OTP" : "Delivery OTP");
 
     if (cleanPhone && cleanPhone.length === 10) {
       try {
@@ -637,13 +656,22 @@ export const verifyDeliveryOtp = async (req, res) => {
 
     const order = lookup.order;
     const isExchangeOrder = Boolean(
-      order.returnRequest?.type === 'exchange' ||
-      String(order.overallStatus || order.status || '').toLowerCase().includes('exchange')
+      order.isExchangeTask ||
+      String(order.returnRequest?.type || order.returnRequest?.requestType || '').toLowerCase() === 'exchange' ||
+      Boolean(order.returnRequest?.exchangeSize || order.returnRequest?.exchangeLength || order.returnRequest?.exchangeColor) ||
+      String(order.returnRequest?.status || '').toLowerCase().includes('exchange') ||
+      String(order.overallStatus || order.status || '').toLowerCase().includes('exchange') ||
+      String(order.deliveryStatus || '').toLowerCase().includes('swap') ||
+      String(order.selfDeliveryDetails?.status || '').toLowerCase().includes('swap')
     );
-    const isReturnOrder = Boolean(
-      order.returnRequest?.type === 'return' ||
-      (!isExchangeOrder && Boolean(order.returnRequest?.type || order.returnRequest?.reason)) ||
+    const isReturnOrder = !isExchangeOrder && Boolean(
+      order.isReturnTask ||
+      String(order.returnRequest?.type || order.returnRequest?.requestType || '').toLowerCase() === 'return' ||
+      Boolean(order.returnRequest?.type || order.returnRequest?.reason) ||
+      String(order.returnRequest?.status || '').toLowerCase().includes('return') ||
+      String(order.returnRequest?.status || '').toLowerCase().includes('refund') ||
       String(order.overallStatus || order.status || '').toLowerCase().includes('return') ||
+      String(order.overallStatus || order.status || '').toLowerCase().includes('refund') ||
       String(order.overallStatus || order.status || '').toLowerCase().includes('pickup')
     );
 
@@ -652,10 +680,10 @@ export const verifyDeliveryOtp = async (req, res) => {
     const exchangeAdjType = returnReq.priceAdjustmentType || (exchangeDiff > 0 ? 'extra_payment' : exchangeDiff < 0 ? 'partial_refund' : 'none');
     const isExchangeExtraPayment = isExchangeOrder && exchangeAdjType === 'extra_payment' && exchangeDiff > 0;
 
-    const isPaid = isReturnOrder
-      ? true
-      : (isExchangeOrder
-        ? (!isExchangeExtraPayment || hasConfirmedPayment)
+    const isPaid = isExchangeOrder
+      ? (!isExchangeExtraPayment || hasConfirmedPayment)
+      : (isReturnOrder
+        ? true
         : (order.paymentStatus === "paid" || order.paymentStatus === "Paid" || hasConfirmedPayment));
 
     if (!isPaid) {
@@ -696,10 +724,10 @@ export const verifyDeliveryOtp = async (req, res) => {
     if (!expectedOtp || providedOtp !== expectedOtp) {
       return res.status(400).json({
         success: false,
-        message: isReturnOrder
-          ? "Invalid Return Pickup OTP. Please ask customer for the correct 4-digit Return PIN sent to their mobile."
-          : (isExchangeOrder
-            ? "Invalid Exchange OTP. Please ask customer for the correct 4-digit Exchange PIN sent to their mobile."
+        message: isExchangeOrder
+          ? "Invalid Exchange OTP. Please ask customer for the correct 4-digit Exchange PIN sent to their mobile."
+          : (isReturnOrder
+            ? "Invalid Return Pickup OTP. Please ask customer for the correct 4-digit Return PIN sent to their mobile."
             : "Invalid Delivery OTP. Please enter the correct 4-digit PIN sent to customer's mobile.")
       });
     }
@@ -720,10 +748,10 @@ export const verifyDeliveryOtp = async (req, res) => {
     const deliveryExecName = order.selfDeliveryDetails?.deliveryPersonName || "Delivery Executive";
     const now = new Date();
 
-    const finalStatus = isReturnOrder ? "product_received" : (isExchangeOrder ? "exchanged" : "Delivered");
+    const finalStatus = isExchangeOrder ? "exchanged" : (isReturnOrder ? "product_received" : "Delivered");
     order.overallStatus = finalStatus;
     order.status = finalStatus;
-    order.deliveryStatus = isReturnOrder ? "Returned (Product Received)" : (isExchangeOrder ? "Exchange Completed" : "Delivered");
+    order.deliveryStatus = isExchangeOrder ? "Doorstep Swap Completed" : (isReturnOrder ? "Returned (Product Received)" : "Delivered");
 
     if (!isReturnOrder) {
       order.paymentStatus = "paid";
@@ -734,11 +762,7 @@ export const verifyDeliveryOtp = async (req, res) => {
       }
     }
 
-    if (isReturnOrder && order.returnRequest) {
-      order.returnRequest.status = "product_received";
-      order.returnRequest.pickupDate = now;
-      order.returnRequest.updatedAt = now;
-    } else if (isExchangeOrder && order.returnRequest) {
+    if (isExchangeOrder && order.returnRequest) {
       order.returnRequest.status = "exchanged";
       order.returnRequest.exchangedAt = now;
       order.returnRequest.updatedAt = now;
@@ -747,11 +771,59 @@ export const verifyDeliveryOtp = async (req, res) => {
       order.settlementDueDate = exchangeSettlementDueDate;
       order.settlementStatus = "pending_exchange_buffer";
       order.isSettlementMatured = false;
+
+      // 1. Generate Section 34 Credit Note for the original returned item
+      const targetSellerStore = order.sellerStoreName || order.items?.[0]?.sellerStoreName || "Store";
+      const prefix = getSellerInvoicePrefix(targetSellerStore);
+      const originalSeq = order.sellerSequence || (order.invoiceNumber ? parseInt(order.invoiceNumber.replace(/\D/g, ""), 10) : 1) || 1;
+      const cnNumber = formatSellerCreditNoteNumber(prefix, originalSeq);
+      order.creditNoteNumber = cnNumber;
+      order.sellerCreditNoteNo = cnNumber;
+      order.sellerCreditNoteSequence = originalSeq;
+
+      // 2. Generate Section 31 Sequential Replacement Tax Invoice for the delivered exchange product
+      try {
+        const sellerCandidateId = order.sellerId || order.items?.[0]?.sellerId;
+        const allSellerOrders = await Order.find({
+          $or: [
+            { sellerId: sellerCandidateId },
+            { "items.sellerId": sellerCandidateId },
+            { sellerStoreName: order.sellerStoreName }
+          ]
+        }).select("sellerSequence sellerExchangeSequence sellerInvoiceNo invoiceNumber exchangeInvoiceNumber").lean();
+
+        let maxSeq = 0;
+        for (const doc of (allSellerOrders || [])) {
+          const s1 = Number(doc.sellerSequence) || 0;
+          const s2 = Number(doc.sellerExchangeSequence) || 0;
+          const m1 = String(doc.sellerInvoiceNo || doc.invoiceNumber || '').match(/\d+$/);
+          const m2 = String(doc.exchangeInvoiceNumber || '').match(/\d+$/);
+          const n1 = m1 ? parseInt(m1[0], 10) : 0;
+          const n2 = m2 ? parseInt(m2[0], 10) : 0;
+          maxSeq = Math.max(maxSeq, s1, s2, n1, n2);
+        }
+        const nextExchSeq = Math.max(maxSeq, originalSeq) + 1;
+        const replacementInvNo = formatSellerInvoiceNumber(prefix, nextExchSeq);
+
+        order.exchangeInvoiceNumber = replacementInvNo;
+        order.sellerExchangeInvoiceNo = replacementInvNo;
+        order.sellerExchangeSequence = nextExchSeq;
+      } catch (e) {
+        console.error("Failed to calculate exchange replacement invoice sequence:", e);
+        const fallbackNext = originalSeq + 10;
+        order.exchangeInvoiceNumber = formatSellerInvoiceNumber(prefix, fallbackNext);
+        order.sellerExchangeInvoiceNo = formatSellerInvoiceNumber(prefix, fallbackNext);
+        order.sellerExchangeSequence = fallbackNext;
+      }
+    } else if (isReturnOrder && order.returnRequest) {
+      order.returnRequest.status = "product_received";
+      order.returnRequest.pickupDate = now;
+      order.returnRequest.updatedAt = now;
     }
 
     if (!order.selfDeliveryDetails) order.selfDeliveryDetails = {};
     order.selfDeliveryDetails.deliveredAt = now;
-    order.selfDeliveryDetails.status = isReturnOrder ? "Pickup Completed" : (isExchangeOrder ? "Exchange Completed" : "Delivered");
+    order.selfDeliveryDetails.status = isExchangeOrder ? "Doorstep Swap Completed" : (isReturnOrder ? "Pickup Completed" : "Delivered");
 
     if (Array.isArray(order.items)) {
       const targetExchItemId = order.returnRequest?.itemId ? String(order.returnRequest.itemId) : null;
@@ -775,7 +847,7 @@ export const verifyDeliveryOtp = async (req, res) => {
         it.status = finalStatus;
         if (!it.selfDeliveryDetails) it.selfDeliveryDetails = {};
         it.selfDeliveryDetails.deliveredAt = now;
-        it.selfDeliveryDetails.status = isReturnOrder ? "Pickup Completed" : (isExchangeOrder ? "Exchange Completed" : "Delivered");
+        it.selfDeliveryDetails.status = isExchangeOrder ? "Doorstep Swap Completed" : (isReturnOrder ? "Pickup Completed" : "Delivered");
         if (isExchangeOrder) {
           it.exchangedAt = now;
           it.settlementDueDate = order.settlementDueDate;
@@ -891,15 +963,15 @@ export const verifyDeliveryOtp = async (req, res) => {
     order.timeline = order.timeline || [];
     order.timeline.push({
       status: finalStatus.toLowerCase(),
-      title: isReturnOrder
-        ? "Return Pickup Completed via OTP Verification"
-        : (isExchangeOrder
-          ? (isExchangeExtraPayment ? `Exchange Completed & Extra ₹${exchangeDiff} Collected` : "Exchange Completed via OTP Verification")
+      title: isExchangeOrder
+        ? (isExchangeExtraPayment ? `Doorstep Swap Completed & Extra ₹${exchangeDiff} Collected` : "Doorstep Swap Completed via OTP Verification")
+        : (isReturnOrder
+          ? "Return Pickup Completed via OTP Verification"
           : (isCodOrder ? "COD Payment Collected & Order Delivered" : "Order Delivered via OTP Verification")),
-      description: isReturnOrder
-        ? `Return item collected from customer by ${deliveryExecName} and customer OTP verified. Item marked as Product Received.`
-        : (isExchangeOrder
-          ? `Exchange handover completed by ${deliveryExecName} and customer OTP verified.${isExchangeExtraPayment ? ` Extra amount of ₹${exchangeDiff} collected.` : ''}`
+      description: isExchangeOrder
+        ? `Doorstep swap handover completed by ${deliveryExecName} and customer OTP verified.${isExchangeExtraPayment ? ` Extra amount of ₹${exchangeDiff} collected.` : ''}`
+        : (isReturnOrder
+          ? `Return item collected from customer by ${deliveryExecName} and customer OTP verified. Item marked as Product Received.`
           : (isCodOrder
             ? `Cash on Delivery (₹${order.totalAmount || order.total || 0}) collected by ${deliveryExecName} and customer OTP verified.`
             : `Order successfully delivered by ${deliveryExecName} and customer OTP verified.`)),
@@ -943,10 +1015,10 @@ export const verifyDeliveryOtp = async (req, res) => {
 
     return res.json({
       success: true,
-      message: isReturnOrder
-        ? "🎉 Return Pickup OTP verified successfully! Item collected and marked as Product Received."
-        : (isExchangeOrder
-          ? "🎉 Exchange OTP verified successfully! Replacement delivered & original item collected."
+      message: isExchangeOrder
+        ? "🎉 Exchange OTP verified successfully! Doorstep swap completed: replacement delivered & original item collected."
+        : (isReturnOrder
+          ? "🎉 Return Pickup OTP verified successfully! Item collected and marked as Product Received."
           : "🎉 Delivery OTP verified successfully! Order marked as Delivered."),
       orderId: order.orderId,
       status: finalStatus
