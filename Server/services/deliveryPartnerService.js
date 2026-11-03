@@ -71,10 +71,10 @@ export const getOrInitDeliveryConfig = async () => {
 };
 
 // ─── 1. Serviceability & Courier Rate Check ──────────────────────────────────
-export const checkServiceabilityService = async ({ pickupPincode, deliveryPincode, weightKg = 1, isCod = false, codAmount = 0 }) => {
+export const checkServiceabilityService = async ({ pickupPincode, deliveryPincode, weightKg = 0.5, isCod = false, codAmount = 0 }) => {
   const pickup = String(pickupPincode || process.env.SHIPROCKET_PICKUP_PINCODE || "226001");
   const delivery = String(deliveryPincode || "110001").trim();
-  const weight = Math.max(0.5, Number(weightKg) || 1);
+  const weight = Math.max(0.1, Number(weightKg) || 0.5);
 
   // Try real Shiprocket serviceability first
   try {
@@ -105,7 +105,7 @@ export const checkServiceabilityService = async ({ pickupPincode, deliveryPincod
     if (partner.code === "LOCAL_EXPRESS") multiplier = isLocalState ? 0.8 : 2.0;
 
     const baseCost = partner.baseRate * multiplier;
-    const additionalWeightCost = Math.max(0, weight - 1) * partner.perKgRate;
+    const additionalWeightCost = Math.max(0, weight - 0.5) * partner.perKgRate;
     const codCharge = isCod ? config.baseCodFee : 0;
     const estimatedRate = Math.round(baseCost + additionalWeightCost + codCharge);
 
@@ -141,7 +141,7 @@ export const checkServiceabilityService = async ({ pickupPincode, deliveryPincod
 };
 
 // ─── 2. Create Shipment — Real Shiprocket AWB Generation ─────────────────────
-export const generateShipmentAwbService = async (orderData, courierCode = "SHIPROCKET", weightKg = 1, dimensions = {}, courierId = null) => {
+export const generateShipmentAwbService = async (orderData, courierCode = "SHIPROCKET", weightKg = 0.5, dimensions = {}, courierId = null) => {
   const orderId = orderData.orderId || orderData.id || generateProductOrderId();
 
   // ── Resolve seller's Shiprocket pickup location ───────────────────────────
@@ -207,7 +207,7 @@ export const generateShipmentAwbService = async (orderData, courierCode = "SHIPR
       pickupToken: `PKP-${srOrder.shipmentId}`,
       pickupLocation: sellerPickupLocation,
       status: "booked",
-      weightKg: Number(weightKg) || 1,
+      weightKg: Number(weightKg) || 0.5,
       dimensions: {
         length: Number(dimensions.length) || 20,
         width: Number(dimensions.width) || 15,

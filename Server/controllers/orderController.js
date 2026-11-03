@@ -821,7 +821,12 @@ export const enrichOrdersWithSellerAndConsumer = async (orders) => {
       });
 
       if (primarySellerDetails) {
-        if (!ord.sellerDetails || isPlaceholderSeller(ord.sellerDetails.storeName)) {
+        const isMismatchedSeller = ord.sellerDetails?.storeName && 
+          primarySellerDetails.storeName && 
+          (String(ord.sellerDetails.storeName).toLowerCase().includes('digicoder') || 
+           String(ord.sellerDetails.storeName).trim().toLowerCase() !== String(primarySellerDetails.storeName).trim().toLowerCase());
+
+        if (!ord.sellerDetails || isPlaceholderSeller(ord.sellerDetails.storeName) || isMismatchedSeller) {
           ord.sellerDetails = primarySellerDetails;
         } else {
           ord.sellerDetails.state = ord.sellerDetails.state || primarySellerDetails.state || "";
@@ -908,7 +913,7 @@ export const getOrders = async (req, res) => {
     const limit = Math.min(200, Math.max(1, parseInt(req.query.limit) || 100));
     const skip = (page - 1) * limit;
 
-    const isDefaultFetch = page === 1 && limit >= 50;
+    const isDefaultFetch = page === 1 && limit >= 50 && !req.query._t && !req.query.bust;
     const now = Date.now();
     if (isDefaultFetch && adminOrdersCache && (now - adminOrdersCacheTime < ORDER_CACHE_TTL_MS)) {
       return res.json(adminOrdersCache);
@@ -1380,19 +1385,19 @@ export const createOrder = async (req, res) => {
       if (prod) {
         if (!item.productId) item.productId = prod._id;
         if (!item.id) item.id = prod._id;
-        if (!item.sellerId && prod.sellerId) item.sellerId = prod.sellerId;
+        if (prod.sellerId) item.sellerId = prod.sellerId;
         if (!item.image && prod.images && prod.images.length > 0) {
           const firstImg = prod.images[0];
           item.image = typeof firstImg === "string" ? firstImg : (firstImg?.url || "");
         } else if (!item.image && prod.image) {
           item.image = typeof prod.image === "string" ? prod.image : (prod.image?.url || "");
         }
-        if (!sellerStoreName && prod.sellerStoreName && !isPlaceholder(prod.sellerStoreName)) sellerStoreName = prod.sellerStoreName;
-        if (!sellerStoreName && prod.storeName && !isPlaceholder(prod.storeName)) sellerStoreName = prod.storeName;
-        if (!sellerStoreName && prod.tradeName && !isPlaceholder(prod.tradeName)) sellerStoreName = prod.tradeName;
-        if (!sellerStoreName && prod.businessName && !isPlaceholder(prod.businessName)) sellerStoreName = prod.businessName;
-        if (!sellerStoreName && prod.sellerName && !isPlaceholder(prod.sellerName)) sellerStoreName = prod.sellerName;
-        if (!sellerStoreName && prod.legalBusinessName && !isPlaceholder(prod.legalBusinessName)) sellerStoreName = prod.legalBusinessName;
+        if (prod.sellerStoreName && !isPlaceholder(prod.sellerStoreName)) sellerStoreName = prod.sellerStoreName;
+        else if (prod.storeName && !isPlaceholder(prod.storeName)) sellerStoreName = prod.storeName;
+        else if (prod.tradeName && !isPlaceholder(prod.tradeName)) sellerStoreName = prod.tradeName;
+        else if (prod.businessName && !isPlaceholder(prod.businessName)) sellerStoreName = prod.businessName;
+        else if (prod.sellerName && !isPlaceholder(prod.sellerName)) sellerStoreName = prod.sellerName;
+        else if (prod.legalBusinessName && !isPlaceholder(prod.legalBusinessName)) sellerStoreName = prod.legalBusinessName;
         item.isReturnable = (prod.returnPolicy === 'non_returnable' || prod.isReturnable === false) ? false : (item.isReturnable ?? prod.isReturnable ?? true);
         item.isExchangeable = (prod.returnPolicy === 'non_returnable' || prod.isExchangeable === false) ? false : (item.isExchangeable ?? prod.isExchangeable ?? true);
         item.isRefundable = (prod.returnPolicy === 'non_returnable' || prod.isRefundable === false) ? false : (item.isRefundable ?? prod.isRefundable ?? true);
@@ -1517,7 +1522,7 @@ export const createOrder = async (req, res) => {
       let sellerAddress = item.sellerAddress || "";
       let sellerCity = item.sellerCity || "";
 
-      const targetSellerId = item.sellerId || prod?.sellerId;
+      const targetSellerId = prod?.sellerId || item.sellerId;
       let cachedSeller = null;
       if (targetSellerId) {
         cachedSeller = await getSellerRecord(targetSellerId);
@@ -1546,6 +1551,7 @@ export const createOrder = async (req, res) => {
         sellerStoreName = "BookVardi Verified Seller";
       }
 
+      item.sellerId = targetSellerId;
       item.sellerName = sellerStoreName;
       item.storeName = sellerStoreName;
       item.sellerStoreName = sellerStoreName;
@@ -1554,7 +1560,7 @@ export const createOrder = async (req, res) => {
       item.sellerAddress = sellerAddress;
       item.sellerCity = sellerCity;
       item.sellerDetails = {
-        sellerId: item.sellerId || targetSellerId,
+        sellerId: targetSellerId,
         storeName: sellerStoreName,
         sellerStoreName: sellerStoreName,
         sellerName: sellerStoreName,
@@ -1959,7 +1965,7 @@ export const createOrder = async (req, res) => {
     const sellerStoreForInvoice = allSellerStoreNames || primarySeller.sellerStoreName || primarySeller.name || "Store";
     const sellerInvoicePrefix = getSellerInvoicePrefix(sellerStoreForInvoice);
 
-    let sellerPrevOrderCount = 0;
+    let maxExistingSeq = 0;
     try {
       const sellerCountFilter = primarySeller.sellerId ? {
         $or: [
@@ -1968,11 +1974,24 @@ export const createOrder = async (req, res) => {
           { sellerStoreName: sellerStoreForInvoice }
         ]
       } : { sellerStoreName: sellerStoreForInvoice };
-      sellerPrevOrderCount = await Order.countDocuments(sellerCountFilter);
+      
+      const existingSellerOrders = await Order.find(sellerCountFilter)
+        .select("sellerSequence sellerExchangeSequence sellerInvoiceNo invoiceNumber exchangeInvoiceNumber sellerExchangeInvoiceNo")
+        .lean();
+
+      for (const doc of (existingSellerOrders || [])) {
+        const s1 = Number(doc.sellerSequence) || 0;
+        const s2 = Number(doc.sellerExchangeSequence) || 0;
+        const m1 = String(doc.sellerInvoiceNo || doc.invoiceNumber || '').match(/\d+$/);
+        const m2 = String(doc.sellerExchangeInvoiceNo || doc.exchangeInvoiceNumber || '').match(/\d+$/);
+        const n1 = m1 ? parseInt(m1[0], 10) : 0;
+        const n2 = m2 ? parseInt(m2[0], 10) : 0;
+        maxExistingSeq = Math.max(maxExistingSeq, s1, s2, n1, n2);
+      }
     } catch (cntErr) {
       console.warn("⚠️ [BACKEND] Count seller orders warning:", cntErr.message);
     }
-    const currentSellerSeq = sellerPrevOrderCount + 1;
+    const currentSellerSeq = maxExistingSeq + 1;
     const generatedSellerInvoiceNo = formatSellerInvoiceNumber(sellerInvoicePrefix, currentSellerSeq);
 
     const newOrder = new Order({
@@ -2376,6 +2395,47 @@ export const trackOrder = async (req, res) => {
   }
 };
 
+async function resolveNextCreditNote(order) {
+  if (order.sellerCreditNoteNo && /^[A-Z0-9]{2,}CN\d+$/i.test(order.sellerCreditNoteNo)) {
+    return {
+      creditNoteNo: order.sellerCreditNoteNo,
+      creditNoteSequence: order.sellerCreditNoteSequence || 1
+    };
+  }
+  const sellerStore = order.sellerStoreName || order.storeName || order.sellerName || order.items?.[0]?.sellerStoreName || "Store";
+  const cnPrefix = getSellerInvoicePrefix(sellerStore);
+  const sellerCandidateId = order.sellerId || order.items?.[0]?.sellerId;
+  const filter = sellerCandidateId ? {
+    $or: [
+      { sellerId: sellerCandidateId },
+      { "items.sellerId": sellerCandidateId },
+      { sellerStoreName: order.sellerStoreName }
+    ]
+  } : { sellerStoreName: order.sellerStoreName };
+
+  let maxCnSeq = 0;
+  try {
+    const sellerOrdersWithCn = await Order.find(filter)
+      .select("sellerCreditNoteSequence sellerCreditNoteNo creditNoteNumber")
+      .lean();
+
+    for (const doc of (sellerOrdersWithCn || [])) {
+      const s = Number(doc.sellerCreditNoteSequence) || 0;
+      const m = String(doc.sellerCreditNoteNo || doc.creditNoteNumber || '').match(/CN0*(\d+)$/i);
+      const n = m ? parseInt(m[1], 10) : 0;
+      maxCnSeq = Math.max(maxCnSeq, s, n);
+    }
+  } catch (err) {
+    console.warn("⚠️ [BACKEND] Failed to resolve max credit note seq:", err.message);
+  }
+
+  const nextCnSeq = maxCnSeq + 1;
+  return {
+    creditNoteNo: formatSellerCreditNoteNumber(cnPrefix, nextCnSeq),
+    creditNoteSequence: nextCnSeq
+  };
+}
+
 // 6. Update Order Status (Admin / Seller / System) with Timeline Push
 export const updateOrder = async (req, res) => {
   try {
@@ -2588,11 +2648,10 @@ export const updateOrder = async (req, res) => {
           existingOrder.sellerPayout = 0;
           existingOrder.sellerSettlement = 0;
           existingOrder.netSettlementAmount = 0;
-          const cnPrefix = getSellerInvoicePrefix(existingOrder.sellerStoreName || existingOrder.storeName || existingOrder.sellerName);
-          const cnSeq = existingOrder.sellerCreditNoteSequence || existingOrder.sellerSequence || 1;
-          const assignedCn = formatSellerCreditNoteNumber(cnPrefix, cnSeq);
-          existingOrder.sellerCreditNoteNo = existingOrder.sellerCreditNoteNo || assignedCn;
-          existingOrder.creditNoteNumber = existingOrder.creditNoteNumber || assignedCn;
+          const cnRes = await resolveNextCreditNote(existingOrder);
+          existingOrder.sellerCreditNoteNo = existingOrder.sellerCreditNoteNo || cnRes.creditNoteNo;
+          existingOrder.creditNoteNumber = existingOrder.creditNoteNumber || cnRes.creditNoteNo;
+          existingOrder.sellerCreditNoteSequence = existingOrder.sellerCreditNoteSequence || cnRes.creditNoteSequence;
           existingOrder.creditNoteIssuedAt = existingOrder.creditNoteIssuedAt || new Date();
           existingOrder.items.forEach(item => {
             item.status = 'Cancelled';
@@ -2634,11 +2693,10 @@ export const updateOrder = async (req, res) => {
         existingOrder.paymentStatus = "refunded";
         existingOrder.refundStatus = "Refund Completed";
         if (existingOrder.returnRequest) existingOrder.returnRequest.status = "refund_completed";
-        const cnPrefix2 = getSellerInvoicePrefix(existingOrder.sellerStoreName || existingOrder.storeName || existingOrder.sellerName);
-        const cnSeq2 = existingOrder.sellerCreditNoteSequence || existingOrder.sellerSequence || 1;
-        const assignedCn2 = formatSellerCreditNoteNumber(cnPrefix2, cnSeq2);
-        existingOrder.sellerCreditNoteNo = existingOrder.sellerCreditNoteNo || assignedCn2;
-        existingOrder.creditNoteNumber = existingOrder.creditNoteNumber || assignedCn2;
+        const cnRes2 = await resolveNextCreditNote(existingOrder);
+        existingOrder.sellerCreditNoteNo = existingOrder.sellerCreditNoteNo || cnRes2.creditNoteNo;
+        existingOrder.creditNoteNumber = existingOrder.creditNoteNumber || cnRes2.creditNoteNo;
+        existingOrder.sellerCreditNoteSequence = existingOrder.sellerCreditNoteSequence || cnRes2.creditNoteSequence;
         existingOrder.creditNoteIssuedAt = existingOrder.creditNoteIssuedAt || new Date();
         existingOrder.settlementStatus = "refunded";
         existingOrder.isSettlementMatured = false;
@@ -2932,7 +2990,7 @@ export const updateOrder = async (req, res) => {
     let shiprocketResult = null;
     if (req.body.createShipment === true && !existingOrder.shiprocketOrderId) {
       try {
-        const weightKg = Number(req.body.weightKg) || 1;
+        const weightKg = Number(req.body.weightKg) || 0.5;
         const srOrder = await createShiprocketOrder(existingOrder, weightKg);
         if (srOrder.success) {
           const awbResult = await assignShiprocketAwb(srOrder.shipmentId);
@@ -4630,11 +4688,10 @@ export const updateReturnExchangeStatus = async (req, res) => {
       order.sellerPayout = 0;
       order.sellerSettlement = 0;
       order.netSettlementAmount = 0;
-      const cnPrefix3 = getSellerInvoicePrefix(order.sellerStoreName || order.storeName || order.sellerName);
-      const cnSeq3 = order.sellerCreditNoteSequence || order.sellerSequence || 1;
-      const assignedCn3 = formatSellerCreditNoteNumber(cnPrefix3, cnSeq3);
-      order.sellerCreditNoteNo = order.sellerCreditNoteNo || assignedCn3;
-      order.creditNoteNumber = order.creditNoteNumber || assignedCn3;
+      const cnRes3 = await resolveNextCreditNote(order);
+      order.sellerCreditNoteNo = order.sellerCreditNoteNo || cnRes3.creditNoteNo;
+      order.creditNoteNumber = order.creditNoteNumber || cnRes3.creditNoteNo;
+      order.sellerCreditNoteSequence = order.sellerCreditNoteSequence || cnRes3.creditNoteSequence;
       order.creditNoteIssuedAt = order.creditNoteIssuedAt || new Date();
 
       if (targetItem) {

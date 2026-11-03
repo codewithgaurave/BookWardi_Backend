@@ -49,7 +49,7 @@ export const checkServiceability = async (req, res) => {
     const result = await checkServiceabilityService({
       pickupPincode: pickupPincode || "226001",
       deliveryPincode,
-      weightKg: weightKg || 1,
+      weightKg: Number(weightKg) || 0.5,
       isCod: Boolean(isCod)
     });
 
@@ -113,7 +113,7 @@ export const createShipment = async (req, res) => {
       const result = await generateShipmentAwbService(
         subOrderData,
         courierCode || "SHIPROCKET",
-        weightKg || 1,
+        Number(weightKg) || 0.5,
         dimensions || {},
         req.body.courierId || null
       );

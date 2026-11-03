@@ -7,7 +7,8 @@ import { enrichOrdersWithSellerAndConsumer, findOrderById, calculateOverallOrder
 import { sendDeliveryPartnerWhatsAppDispatch } from "../services/whatsappService.js";
 import { broadcastRealtimeEvent } from "../services/realtimeService.js";
 import { calculateSellerSettlement } from "../services/settlementService.js";
-import { sendOrderStatusSms } from "../services/smsService.js";
+import { sendOrderStatusSms, sendFast2SmsRefundProcessed } from "../services/smsService.js";
+import { processRazorpayRefund } from "../services/refundService.js";
 import { createShiprocketOrder, assignShiprocketAwb, generateShiprocketPickup } from "../services/shiprocketService.js";
 import { getSellerInvoicePrefix, formatSellerInvoiceNumber } from "../utils/invoiceHelper.js";
 
@@ -380,8 +381,17 @@ export const formatSellerSingleOrder = (o, scope = null) => {
 
   const resolvedSubtotal = computedItemsSubtotal;
 
+  // Check cancellation first: a cancelled order must strictly be Cancelled
+  const isCancelledOrderEarly = Boolean(
+    o.cancelledAt ||
+    String(o.overallStatus || o.status || '').toLowerCase().includes('cancel') ||
+    o.cancellationReason ||
+    String(o.refundStatus || '').toLowerCase().includes('refund') ||
+    o.settlementStatus === "refunded"
+  );
+
   // Compute status strictly from THIS seller's items to prevent other sellers' changes from corrupting this dashboard
-  const sellerComputedStatus = relevantItems.length > 0 ? calculateOverallOrderStatus(relevantItems, o) : null;
+  const sellerComputedStatus = isCancelledOrderEarly ? "Cancelled" : (relevantItems.length > 0 ? calculateOverallOrderStatus(relevantItems, o) : null);
   const sellerItemStatus = relevantItems.find(i => i.status && normalizeOrderStatus(i.status, o) !== "Pending")?.status;
   const hasActiveReturnRequest = o.returnRequest &&
     typeof o.returnRequest === "object" &&
@@ -389,7 +399,7 @@ export const formatSellerSingleOrder = (o, scope = null) => {
     Boolean(o.returnRequest.status && !['none', 'n/a', 'no_request', 'normal', 'null', ''].includes(String(o.returnRequest.status).toLowerCase().trim()));
 
   const reqType = String(o.returnRequest?.type || '').toLowerCase();
-  const rawStatus = hasActiveReturnRequest
+  const rawStatus = isCancelledOrderEarly ? "cancelled" : hasActiveReturnRequest
     ? (
         o.returnRequest.status === 'requested'
           ? (reqType === 'exchange' ? 'exchange_requested' : 'return_requested')
@@ -413,7 +423,7 @@ export const formatSellerSingleOrder = (o, scope = null) => {
     ? "Pending"
     : rawStatus;
 
-  const formattedStatus = normalizeOrderStatus(effectiveRawStatus, o);
+  const formattedStatus = isCancelledOrderEarly ? "Cancelled" : normalizeOrderStatus(effectiveRawStatus, o);
 
   let rawOrderId = o.orderId || o.id;
   if (!rawOrderId || /^[0-9a-fA-F]{24}$/.test(rawOrderId)) {
@@ -1093,8 +1103,30 @@ export const updateSellerOrderStatus = async (req, res) => {
       ? normalizeOrderStatus(status)
       : normalizeOrderStatus(order.status || "Pending");
 
+    const scope = await getExpandedSellerScope(req);
+    const strExpandedSellerIds = scope?.strExpandedSellerIds || [];
+    const isOrderOwner = Boolean(
+      (order.sellerId && strExpandedSellerIds.some(sId => String(sId).toLowerCase() === String(order.sellerId).toLowerCase())) ||
+      (order.storeName && strExpandedSellerIds.some(sId => String(sId).toLowerCase() === String(order.storeName).toLowerCase())) ||
+      (order.sellerStoreName && strExpandedSellerIds.some(sId => String(sId).toLowerCase() === String(order.sellerStoreName).toLowerCase())) ||
+      (Array.isArray(order.items) && order.items.some(it => isItemBelongingToSellerScope(it, scope)))
+    );
+
+    if (!isOrderOwner && req.user?.role !== "admin" && req.user?.role !== "super_admin") {
+      return res.status(403).json({
+        success: false,
+        message: "Unauthorized: You can only update orders that belong to your store."
+      });
+    }
+
     const sellerInfo = await resolveSellerProfileDetails(req, order);
-    order.sellerDetails = sellerInfo;
+    const isPrimaryOwner = Boolean(
+      (order.sellerId && strExpandedSellerIds.some(sId => String(sId).toLowerCase() === String(order.sellerId).toLowerCase())) ||
+      (!order.sellerId && order.items?.[0] && isItemBelongingToSellerScope(order.items[0], scope))
+    );
+    if (isPrimaryOwner) {
+      order.sellerDetails = sellerInfo;
+    }
 
     let rawMode = deliveryMode || deliveryType || (selfDeliveryDetails ? "self_delivery" : (courierName || trackingNumber ? "third_party" : (order.deliveryMode || "")));
     if (rawMode === "self") rawMode = "self_delivery";
@@ -1152,7 +1184,7 @@ export const updateSellerOrderStatus = async (req, res) => {
       const isThirdPartyShipment = (formattedStatus === "Shipped" || status === "Shipped") && !order.shiprocketOrderId;
       if (isThirdPartyShipment && process.env.SHIPROCKET_API_PASSWORD) {
         try {
-          const weightKg = Number(req.body.weightKg) || 1;
+          const weightKg = Number(req.body.weightKg) || 0.5;
           const srOrder = await createShiprocketOrder(order, weightKg);
           if (srOrder && srOrder.success) {
             const awbResult = await assignShiprocketAwb(srOrder.shipmentId);
@@ -1276,7 +1308,7 @@ export const updateSellerOrderStatus = async (req, res) => {
       status: formattedStatus,
       overallStatus: formattedStatus,
       deliveryMode: resolvedMode,
-      sellerDetails: sellerInfo
+      ...(isPrimaryOwner ? { sellerDetails: sellerInfo } : {})
     };
 
     // Keep returnRequest intact if active
@@ -1337,7 +1369,6 @@ export const updateSellerOrderStatus = async (req, res) => {
 
     // Also update item statuses in items array for seller's items
     if (Array.isArray(order.items) && order.items.length > 0) {
-      const scope = await getExpandedSellerScope(req);
       const targetKey = String(formattedStatus || '').toLowerCase().trim().replace(/[\s-]+/g, '_');
       const targetRank = STAGE_RANK[targetKey];
 
@@ -1393,10 +1424,10 @@ export const updateSellerOrderStatus = async (req, res) => {
           ...itemObj,
           status: nextStatus,
           deliveryType: resolvedMode,
-          sellerDetails: sellerInfo,
-          sellerName: sellerInfo.sellerName,
-          storeName: sellerInfo.storeName,
-          sellerPhone: sellerInfo.phone,
+          sellerDetails: itemObj.sellerDetails || sellerInfo,
+          sellerName: itemObj.sellerName || sellerInfo.sellerName,
+          storeName: itemObj.storeName || sellerInfo.storeName,
+          sellerPhone: itemObj.sellerPhone || sellerInfo.phone,
           commissionRate: itemStl.commissionRate,
           commissionAmount: itemStl.commissionAmount,
           gstOnCommissionRate: itemStl.gstOnCommissionRate,
@@ -1453,7 +1484,6 @@ export const updateSellerOrderStatus = async (req, res) => {
 
     // Fetch updated document and format for seller view to eliminate flicker
     const updatedOrder = await Order.findById(order._id);
-    const scope = await getExpandedSellerScope(req);
     const formattedResult = formatSellerSingleOrder(updatedOrder, scope) || updatedOrder;
 
     invalidateSellerOrdersCache();
@@ -1702,5 +1732,182 @@ export const downloadSellerExchangeInvoice = async (req, res) => {
   } catch (error) {
     console.error("Seller exchange invoice download error:", error);
     res.status(500).json({ message: "Failed to generate seller exchange invoice", error: error.message });
+  }
+};
+
+
+// Seller Pre-Delivery Cancellation Refund Workflow
+export const handleSellerCancellationRefund = async (req, res) => {
+  try {
+    const { orderId } = req.params;
+    const { action, refundTxnId, notes } = req.body;
+    const sellerInfo = req.seller || req.user || {};
+
+    const order = await findOrderById(orderId);
+    if (!order) {
+      return res.status(404).json({ success: false, message: "Order not found." });
+    }
+
+    const scope = await getExpandedSellerScope(req);
+    const refundAmount = Number(order.totalAmount || order.total || order.refundDetails?.amount || 0);
+
+    if (action === "forward_to_admin") {
+      order.refundStatus = "Forwarded to Admin (Processing)";
+
+      const timelineDesc = `Cancellation refund request (₹${refundAmount}) forwarded to Admin by Seller (${sellerInfo.storeName || 'Seller'}) for disbursement.`;
+      order.timeline = order.timeline || [];
+      order.timeline.push({
+        status: "cancelled",
+        title: "Refund Request Forwarded to Admin",
+        description: timelineDesc,
+        timestamp: new Date(),
+        updatedBy: sellerInfo.storeName || "Seller"
+      });
+
+      await order.save();
+      invalidateSellerOrdersCache();
+      invalidateOrdersCache();
+
+      broadcastRealtimeEvent({
+        type: "ORDER_UPDATED",
+        orderId: order.orderId,
+        masterOrderId: order.masterOrderId,
+        sellerId: order.sellerId,
+        status: "Cancelled",
+        refundStatus: "Forwarded to Admin (Processing)"
+      });
+
+      return res.json({
+        success: true,
+        message: "Refund request forwarded to Admin successfully.",
+        order: formatSellerSingleOrder(order, scope) || order
+      });
+    }
+
+    if (action === "complete_refund") {
+      const finalTxnId = refundTxnId?.trim() || `REF-${Date.now().toString(36).toUpperCase()}-${Math.floor(1000 + Math.random() * 9000)}`;
+      order.refundStatus = "Completed";
+      order.settlementStatus = "refunded";
+      order.refundTxnId = finalTxnId;
+      order.refundDetails = {
+        ...(order.refundDetails || {}),
+        refundTxnId: finalTxnId,
+        amount: refundAmount,
+        status: "Completed",
+        refundMethod: order.refundDetails?.method || "Direct Payout",
+        refundedAt: new Date(),
+        refundedBy: sellerInfo.storeName || "Seller"
+      };
+
+      order.timeline = order.timeline || [];
+      order.timeline.push({
+        status: "refunded",
+        title: "Refund Completed",
+        description: `Refund of ₹${refundAmount} recorded as completed by Seller (${sellerInfo.storeName || 'Seller'}). Ref/TXN: ${finalTxnId}.${notes ? ' Note: ' + notes : ''}`,
+        timestamp: new Date(),
+        updatedBy: sellerInfo.storeName || "Seller"
+      });
+
+      await order.save();
+
+      try {
+        const custPhone = order.customer?.phone || order.shippingAddress?.phone || order.phone;
+        const cleanCustPhone = String(custPhone || "").replace(/\D/g, "").slice(-10);
+        if (cleanCustPhone.length === 10) {
+          sendFast2SmsRefundProcessed(cleanCustPhone, refundAmount, order.orderId, finalTxnId).catch(() => {});
+        }
+      } catch (smsErr) {}
+
+      invalidateSellerOrdersCache();
+      invalidateOrdersCache();
+
+      broadcastRealtimeEvent({
+        type: "ORDER_UPDATED",
+        orderId: order.orderId,
+        masterOrderId: order.masterOrderId,
+        sellerId: order.sellerId,
+        status: "Cancelled",
+        refundStatus: "Completed"
+      });
+
+      return res.json({
+        success: true,
+        message: `Refund of ₹${refundAmount} recorded as completed (TXN: ${finalTxnId}).`,
+        order: formatSellerSingleOrder(order, scope) || order
+      });
+    }
+
+    if (action === "razorpay_auto_refund") {
+      const paymentId = order.razorpayPaymentId || order.paymentDetails?.razorpay_payment_id || order.paymentId;
+      if (!paymentId) {
+        return res.status(400).json({
+          success: false,
+          message: "No Razorpay payment ID found on this order. Please use direct settlement or forward to Admin."
+        });
+      }
+
+      const rzpRes = await processRazorpayRefund({
+        paymentId,
+        amount: refundAmount,
+        notes: {
+          orderId: order.orderId,
+          sellerName: sellerInfo.storeName || "Seller",
+          reason: order.cancellationReason || "Pre-delivery customer cancellation"
+        }
+      });
+
+      if (rzpRes && rzpRes.success) {
+        const finalTxnId = rzpRes.refundId || rzpRes.id || `RZP-${Date.now()}`;
+        order.refundStatus = "Completed";
+        order.settlementStatus = "refunded";
+        order.refundTxnId = finalTxnId;
+        order.refundDetails = {
+          ...(order.refundDetails || {}),
+          refundTxnId: finalTxnId,
+          amount: refundAmount,
+          status: "Completed",
+          refundMethod: "Razorpay Auto-Refund",
+          refundedAt: new Date(),
+          refundedBy: sellerInfo.storeName || "Seller"
+        };
+        await order.save();
+
+        try {
+          const custPhone = order.customer?.phone || order.shippingAddress?.phone || order.phone;
+          const cleanCustPhone = String(custPhone || "").replace(/\D/g, "").slice(-10);
+          if (cleanCustPhone.length === 10) {
+            sendFast2SmsRefundProcessed(cleanCustPhone, refundAmount, order.orderId, finalTxnId).catch(() => {});
+          }
+        } catch (smsErr) {}
+
+        invalidateSellerOrdersCache();
+        invalidateOrdersCache();
+
+        broadcastRealtimeEvent({
+          type: "ORDER_UPDATED",
+          orderId: order.orderId,
+          masterOrderId: order.masterOrderId,
+          sellerId: order.sellerId,
+          status: "Cancelled",
+          refundStatus: "Completed"
+        });
+
+        return res.json({
+          success: true,
+          message: `Razorpay refund of ₹${refundAmount} processed successfully (TXN: ${finalTxnId}).`,
+          order: formatSellerSingleOrder(order, scope) || order
+        });
+      } else {
+        return res.status(400).json({
+          success: false,
+          message: rzpRes?.message || "Failed to process Razorpay refund."
+        });
+      }
+    }
+
+    return res.status(400).json({ success: false, message: "Invalid action." });
+  } catch (error) {
+    console.error("Seller cancellation refund error:", error);
+    return res.status(500).json({ success: false, message: error.message });
   }
 };

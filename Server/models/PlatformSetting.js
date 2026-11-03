@@ -9,6 +9,7 @@ const platformSettingSchema = new mongoose.Schema({
   gstTcsRate: { type: Number, default: 0.5 },
   gstTaxRate: { type: Number, default: 18 },
   shippingFee: { type: Number, default: 49 },
+  defaultPackageWeightKg: { type: Number, default: 0.5 },
   minOrderFreeShipping: { type: Number, default: 999 },
   freeShippingThreshold: { type: Number, default: 999 },
   codFee: { type: Number, default: 0 },

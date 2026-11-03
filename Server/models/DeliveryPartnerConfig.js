@@ -22,6 +22,7 @@ const deliveryPartnerSchema = new mongoose.Schema(
 const deliveryPartnerConfigSchema = new mongoose.Schema(
   {
     platformDefaultPartner: { type: String, default: "shiprocket" },
+    defaultPackageWeightKg: { type: Number, default: 0.5 },
     freeShippingThreshold: { type: Number, default: 999 },
     baseCodFee: { type: Number, default: 40 },
     partners: [deliveryPartnerSchema]

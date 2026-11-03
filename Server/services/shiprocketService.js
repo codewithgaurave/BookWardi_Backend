@@ -48,14 +48,14 @@ const shiprocketApi = async () => {
 };
 
 // ─── 1. Check Serviceability & Courier Rates ────────────────────────────────
-export const checkShiprocketServiceability = async ({ pickupPincode, deliveryPincode, weightKg = 1, isCod = false, codAmount = 0 }) => {
+export const checkShiprocketServiceability = async ({ pickupPincode, deliveryPincode, weightKg = 0.5, isCod = false, codAmount = 0 }) => {
   try {
     const api = await shiprocketApi();
 
     const params = {
       pickup_postcode: String(pickupPincode || process.env.SHIPROCKET_PICKUP_PINCODE || "226001"),
       delivery_postcode: String(deliveryPincode),
-      weight: Number(weightKg) || 1,
+      weight: Number(weightKg) || 0.5,
       cod: isCod ? 1 : 0
     };
 
@@ -102,7 +102,7 @@ export const checkShiprocketServiceability = async ({ pickupPincode, deliveryPin
 };
 
 // ─── 2. Create Shiprocket Order ──────────────────────────────────────────────
-export const createShiprocketOrder = async (order, weightKg = 1, dimensions = {}) => {
+export const createShiprocketOrder = async (order, weightKg = 0.5, dimensions = {}) => {
   try {
     const api = await shiprocketApi();
 
@@ -167,7 +167,7 @@ export const createShiprocketOrder = async (order, weightKg = 1, dimensions = {}
       length: Number(dimensions.length) || 20,
       breadth: Number(dimensions.width) || 15,
       height: Number(dimensions.height) || 10,
-      weight: Number(weightKg) || 1
+      weight: Number(weightKg) || 0.5
     };
 
     // Add COD amount if applicable

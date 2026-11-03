@@ -775,34 +775,59 @@ export const verifyDeliveryOtp = async (req, res) => {
       // 1. Generate Section 34 Credit Note for the original returned item
       const targetSellerStore = order.sellerStoreName || order.items?.[0]?.sellerStoreName || "Store";
       const prefix = getSellerInvoicePrefix(targetSellerStore);
-      const originalSeq = order.sellerSequence || (order.invoiceNumber ? parseInt(order.invoiceNumber.replace(/\D/g, ""), 10) : 1) || 1;
-      const cnNumber = formatSellerCreditNoteNumber(prefix, originalSeq);
-      order.creditNoteNumber = cnNumber;
-      order.sellerCreditNoteNo = cnNumber;
-      order.sellerCreditNoteSequence = originalSeq;
+      const sellerCandidateId = order.sellerId || order.items?.[0]?.sellerId;
+
+      try {
+        const sellerOrdersWithCn = await Order.find({
+          $or: [
+            { sellerId: sellerCandidateId },
+            { "items.sellerId": sellerCandidateId },
+            { sellerStoreName: order.sellerStoreName }
+          ]
+        }).select("sellerCreditNoteSequence sellerCreditNoteNo creditNoteNumber").lean();
+
+        let maxCnSeq = 0;
+        for (const doc of (sellerOrdersWithCn || [])) {
+          const s = Number(doc.sellerCreditNoteSequence) || 0;
+          const m = String(doc.sellerCreditNoteNo || doc.creditNoteNumber || '').match(/CN0*(\d+)$/i);
+          const n = m ? parseInt(m[1], 10) : 0;
+          maxCnSeq = Math.max(maxCnSeq, s, n);
+        }
+        const nextCnSeq = maxCnSeq + 1;
+        const cnNumber = formatSellerCreditNoteNumber(prefix, nextCnSeq);
+        order.creditNoteNumber = cnNumber;
+        order.sellerCreditNoteNo = cnNumber;
+        order.sellerCreditNoteSequence = nextCnSeq;
+      } catch (cnErr) {
+        console.error("Failed to calculate sequential credit note number:", cnErr);
+        const originalSeq = order.sellerSequence || 1;
+        const fallbackCn = formatSellerCreditNoteNumber(prefix, originalSeq);
+        order.creditNoteNumber = fallbackCn;
+        order.sellerCreditNoteNo = fallbackCn;
+        order.sellerCreditNoteSequence = originalSeq;
+      }
 
       // 2. Generate Section 31 Sequential Replacement Tax Invoice for the delivered exchange product
       try {
-        const sellerCandidateId = order.sellerId || order.items?.[0]?.sellerId;
         const allSellerOrders = await Order.find({
           $or: [
             { sellerId: sellerCandidateId },
             { "items.sellerId": sellerCandidateId },
             { sellerStoreName: order.sellerStoreName }
           ]
-        }).select("sellerSequence sellerExchangeSequence sellerInvoiceNo invoiceNumber exchangeInvoiceNumber").lean();
+        }).select("sellerSequence sellerExchangeSequence sellerInvoiceNo invoiceNumber exchangeInvoiceNumber sellerExchangeInvoiceNo").lean();
 
         let maxSeq = 0;
         for (const doc of (allSellerOrders || [])) {
           const s1 = Number(doc.sellerSequence) || 0;
           const s2 = Number(doc.sellerExchangeSequence) || 0;
           const m1 = String(doc.sellerInvoiceNo || doc.invoiceNumber || '').match(/\d+$/);
-          const m2 = String(doc.exchangeInvoiceNumber || '').match(/\d+$/);
+          const m2 = String(doc.sellerExchangeInvoiceNo || doc.exchangeInvoiceNumber || '').match(/\d+$/);
           const n1 = m1 ? parseInt(m1[0], 10) : 0;
           const n2 = m2 ? parseInt(m2[0], 10) : 0;
           maxSeq = Math.max(maxSeq, s1, s2, n1, n2);
         }
-        const nextExchSeq = Math.max(maxSeq, originalSeq) + 1;
+        const nextExchSeq = maxSeq + 1;
         const replacementInvNo = formatSellerInvoiceNumber(prefix, nextExchSeq);
 
         order.exchangeInvoiceNumber = replacementInvNo;
@@ -810,7 +835,7 @@ export const verifyDeliveryOtp = async (req, res) => {
         order.sellerExchangeSequence = nextExchSeq;
       } catch (e) {
         console.error("Failed to calculate exchange replacement invoice sequence:", e);
-        const fallbackNext = originalSeq + 10;
+        const fallbackNext = 20;
         order.exchangeInvoiceNumber = formatSellerInvoiceNumber(prefix, fallbackNext);
         order.sellerExchangeInvoiceNo = formatSellerInvoiceNumber(prefix, fallbackNext);
         order.sellerExchangeSequence = fallbackNext;

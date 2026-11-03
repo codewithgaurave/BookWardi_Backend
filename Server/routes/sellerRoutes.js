@@ -36,6 +36,7 @@ import {
   getSellerCustomers,
   updateSellerOrderItemStatus,
   updateSellerOrderStatus,
+  handleSellerCancellationRefund,
   downloadSellerInvoice,
   downloadSellerCreditNote,
   downloadSellerExchangeInvoice,
@@ -140,6 +141,8 @@ router.get("/orders/:orderId/exchange-invoice", authenticateSeller, downloadSell
 router.patch("/orders/:orderId/status", authenticateSeller, updateSellerOrderStatus);
 router.put("/orders/:orderId/status", authenticateSeller, updateSellerOrderStatus);
 router.post("/orders/:orderId/resend-whatsapp", authenticateSeller, resendSellerDeliveryBoyWhatsApp);
+router.post("/orders/:orderId/cancellation-refund", authenticateSeller, handleSellerCancellationRefund);
+router.patch("/orders/:orderId/cancellation-refund", authenticateSeller, handleSellerCancellationRefund);
 router.patch("/orders/:id/return-exchange/status", authenticateSeller, updateReturnExchangeStatus);
 router.put("/orders/:id/return-exchange/status", authenticateSeller, updateReturnExchangeStatus);
 router.put(

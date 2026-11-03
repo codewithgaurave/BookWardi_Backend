@@ -118,16 +118,29 @@ export const getSellerCreditNoteNumber = (order, seller = null, allOrders = []) 
   const storeName = sellerCand?.storeName || sellerCand?.sellerStoreName || sellerCand?.businessName || sellerCand?.name || order.sellerStoreName || order.storeName || '';
   const prefix = getSellerInvoicePrefix(storeName);
 
-  // If order has an invoice number (like NSD04), sync CN number with it directly
-  const invStr = String(order.sellerInvoiceNo || order.invoiceNumber || '');
-  const match = invStr.match(/^[A-Z0-9]{2,}?0*(\d+)$/i);
-  if (match) {
-    const seq = parseInt(match[1], 10);
-    return formatSellerCreditNoteNumber(prefix, seq);
+  if (order.sellerCreditNoteSequence && Number(order.sellerCreditNoteSequence) > 0) {
+    return formatSellerCreditNoteNumber(prefix, order.sellerCreditNoteSequence);
   }
 
-  const seq = order.sellerCreditNoteSequence || order.sellerSequence || 1;
-  return formatSellerCreditNoteNumber(prefix, seq);
+  // Calculate chronological sequence among credit note orders
+  if (Array.isArray(allOrders) && allOrders.length > 0) {
+    const targetOrderId = String(order.id || order.orderId || order._id || '');
+    const cnOrders = allOrders
+      .filter(o => o.creditNoteNumber || o.sellerCreditNoteNo || o.sellerCreditNoteSequence || o.isCancelled || ['refunded', 'refund_completed'].includes(String(o.status || '').toLowerCase()) || String(o.returnRequest?.type || '').toLowerCase() === 'exchange')
+      .sort((a, b) => {
+        const timeA = new Date(a.returnRequest?.updatedAt || a.cancelledAt || a.createdAt || a.date || 0).getTime() || 0;
+        const timeB = new Date(b.returnRequest?.updatedAt || b.cancelledAt || b.createdAt || b.date || 0).getTime() || 0;
+        if (timeA !== timeB) return timeA - timeB;
+        return String(a._id || a.id || '').localeCompare(String(b._id || b.id || ''));
+      });
+
+    const cnIdx = cnOrders.findIndex(o => String(o.id || o.orderId || o._id || '') === targetOrderId);
+    if (cnIdx >= 0) {
+      return formatSellerCreditNoteNumber(prefix, cnIdx + 1);
+    }
+  }
+
+  return formatSellerCreditNoteNumber(prefix, 1);
 };
 
 /**
