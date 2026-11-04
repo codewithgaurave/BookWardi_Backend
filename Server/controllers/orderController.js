@@ -3029,6 +3029,12 @@ export const updateOrder = async (req, res) => {
             existingOrder.trackingUrl = `https://shiprocket.co/tracking/${awbResult.awbCode}`;
             existingOrder.deliveryMode = 'third_party';
 
+            // Auto-advance status to Shipped upon AWB generation
+            if (!['Delivered', 'Cancelled', 'Returned'].includes(existingOrder.status)) {
+              existingOrder.status = 'Shipped';
+              existingOrder.overallStatus = 'Shipped';
+            }
+
             let officialLabelUrl = '';
             try {
               const labelRes = await getShiprocketLabel(srOrder.shipmentId);
@@ -3052,6 +3058,9 @@ export const updateOrder = async (req, res) => {
             if (Array.isArray(existingOrder.items)) {
               existingOrder.items.forEach(item => {
                 item.deliveryType = 'third_party';
+                if (!['Delivered', 'Cancelled', 'Returned'].includes(item.status)) {
+                  item.status = 'Shipped';
+                }
                 item.thirdPartyDetails = {
                   ...item.thirdPartyDetails,
                   courierName: realCourier,
