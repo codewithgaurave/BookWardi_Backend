@@ -49,3 +49,4 @@ Thumbs.db
 # Documentation & Internal Notes
 *.md
 Server/md/
+backups/

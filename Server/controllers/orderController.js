@@ -10,7 +10,7 @@ import Cart from "../models/Cart.js";
 import mongoose from "mongoose";
 import { sendDeliveryPartnerWhatsAppDispatch } from "../services/whatsappService.js";
 import { broadcastRealtimeEvent } from "../services/realtimeService.js";
-import { createShiprocketOrder, assignShiprocketAwb, generateShiprocketPickup, createShiprocketReturnOrder } from "../services/shiprocketService.js";
+import { createShiprocketOrder, assignShiprocketAwb, generateShiprocketPickup, createShiprocketReturnOrder, getShiprocketLabel } from "../services/shiprocketService.js";
 import { processRazorpayRefund } from "../services/refundService.js";
 import { calculateSellerSettlement, calculateSettlementMaturity, reconcileSellerSettlementBalances, isGstExempted } from "../services/settlementService.js";
 import { 
@@ -3021,26 +3021,49 @@ export const updateOrder = async (req, res) => {
         if (srOrder.success) {
           const awbResult = await assignShiprocketAwb(srOrder.shipmentId);
           if (awbResult.success) {
+            const realCourier = awbResult.courierName || 'Amazon Shipping / Delhivery';
             existingOrder.shiprocketOrderId = srOrder.shiprocketOrderId;
             existingOrder.shiprocketShipmentId = srOrder.shipmentId;
             existingOrder.trackingNumber = awbResult.awbCode;
-            existingOrder.courierName = awbResult.courierName || req.body.courierCode || 'Shiprocket';
+            existingOrder.courierName = realCourier;
             existingOrder.trackingUrl = `https://shiprocket.co/tracking/${awbResult.awbCode}`;
             existingOrder.deliveryMode = 'third_party';
+
+            let officialLabelUrl = '';
+            try {
+              const labelRes = await getShiprocketLabel(srOrder.shipmentId);
+              if (labelRes && labelRes.labelUrl) {
+                officialLabelUrl = labelRes.labelUrl;
+              }
+            } catch (lblErr) {}
+
+            existingOrder.shippingLabelUrl = officialLabelUrl;
+            existingOrder.shipmentDetails = {
+              ...(existingOrder.shipmentDetails || {}),
+              shiprocketOrderId: srOrder.shiprocketOrderId,
+              shiprocketShipmentId: srOrder.shipmentId,
+              awbNumber: awbResult.awbCode,
+              courierPartnerName: realCourier,
+              courierPartnerId: awbResult.courierId,
+              shippingLabelUrl: officialLabelUrl,
+              weightKg: 0.5
+            };
+
             if (Array.isArray(existingOrder.items)) {
               existingOrder.items.forEach(item => {
                 item.deliveryType = 'third_party';
                 item.thirdPartyDetails = {
                   ...item.thirdPartyDetails,
-                  courierName: awbResult.courierName || 'Shiprocket',
+                  courierName: realCourier,
                   trackingNumber: awbResult.awbCode,
-                  trackingUrl: `https://shiprocket.co/tracking/${awbResult.awbCode}`
+                  trackingUrl: `https://shiprocket.co/tracking/${awbResult.awbCode}`,
+                  shippingLabelUrl: officialLabelUrl
                 };
               });
             }
             generateShiprocketPickup(srOrder.shipmentId).catch(() => {});
-            shiprocketResult = { success: true, awbCode: awbResult.awbCode, courierName: awbResult.courierName, shiprocketOrderId: srOrder.shiprocketOrderId };
-            console.log(`✅ [SHIPROCKET] Shipment created for Order ${existingOrder.orderId}: AWB ${awbResult.awbCode}`);
+            shiprocketResult = { success: true, awbCode: awbResult.awbCode, courierName: realCourier, shippingLabelUrl: officialLabelUrl, shiprocketOrderId: srOrder.shiprocketOrderId };
+            console.log(`✅ [SHIPROCKET] Shipment created for Order ${existingOrder.orderId}: AWB ${awbResult.awbCode} via ${realCourier}`);
           } else {
             shiprocketResult = { success: false, error: 'AWB assignment failed' };
           }

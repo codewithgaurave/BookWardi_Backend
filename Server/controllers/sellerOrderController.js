@@ -9,7 +9,7 @@ import { broadcastRealtimeEvent } from "../services/realtimeService.js";
 import { calculateSellerSettlement } from "../services/settlementService.js";
 import { sendOrderStatusSms, sendFast2SmsRefundProcessed } from "../services/smsService.js";
 import { processRazorpayRefund } from "../services/refundService.js";
-import { createShiprocketOrder, assignShiprocketAwb, generateShiprocketPickup } from "../services/shiprocketService.js";
+import { createShiprocketOrder, assignShiprocketAwb, generateShiprocketPickup, getShiprocketLabel } from "../services/shiprocketService.js";
 import { getSellerInvoicePrefix, formatSellerInvoiceNumber } from "../utils/invoiceHelper.js";
 
 // Global in-memory cache for ultra-fast seller orders
@@ -1189,14 +1189,35 @@ export const updateSellerOrderStatus = async (req, res) => {
           if (srOrder && srOrder.success) {
             const awbResult = await assignShiprocketAwb(srOrder.shipmentId);
             if (awbResult && awbResult.success) {
+              const realCourier = awbResult.courierName || "Amazon Shipping / Delhivery";
               effectiveAwb = awbResult.awbCode;
               order.shiprocketOrderId = srOrder.shiprocketOrderId;
               order.shiprocketShipmentId = srOrder.shipmentId;
               order.trackingNumber = awbResult.awbCode;
-              order.courierName = awbResult.courierName || "Shiprocket";
+              order.courierName = realCourier;
               order.trackingUrl = `https://shiprocket.co/tracking/${awbResult.awbCode}`;
+
+              let officialLabelUrl = "";
+              try {
+                const labelRes = await getShiprocketLabel(srOrder.shipmentId);
+                if (labelRes && labelRes.labelUrl) {
+                  officialLabelUrl = labelRes.labelUrl;
+                }
+              } catch (lblErr) {}
+
+              order.shippingLabelUrl = officialLabelUrl;
+              order.shipmentDetails = {
+                ...(order.shipmentDetails || {}),
+                shiprocketOrderId: srOrder.shiprocketOrderId,
+                shiprocketShipmentId: srOrder.shipmentId,
+                awbNumber: awbResult.awbCode,
+                courierPartnerName: realCourier,
+                shippingLabelUrl: officialLabelUrl,
+                weightKg: 0.5
+              };
+
               generateShiprocketPickup(srOrder.shipmentId).catch(() => {});
-              console.log(`✅ [SHIPROCKET] Seller dispatched Order ${order.orderId}: AWB ${awbResult.awbCode} via ${awbResult.courierName}`);
+              console.log(`✅ [SHIPROCKET] Seller dispatched Order ${order.orderId}: AWB ${awbResult.awbCode} via ${realCourier}`);
             }
           }
         } catch (srErr) {
@@ -1206,10 +1227,10 @@ export const updateSellerOrderStatus = async (req, res) => {
 
       effectiveAwb = effectiveAwb || trackingNumber || order.trackingNumber || "";
       if (!effectiveAwb || effectiveAwb.startsWith("DLV-")) {
-        const courierPrefix = String(order.courierName || "SHIPROCKET")
+        const courierPrefix = String(order.courierName && order.courierName !== 'Shiprocket' ? order.courierName : "AMAZON_EXP")
           .toUpperCase()
           .replace(/[^A-Z0-9]/g, "")
-          .slice(0, 10) || "COURIER";
+          .slice(0, 10) || "EXP";
         effectiveAwb = `${courierPrefix}-${Math.floor(10000000 + Math.random() * 90000000)}`;
       }
       order.trackingNumber = effectiveAwb;

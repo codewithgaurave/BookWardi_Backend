@@ -164,10 +164,10 @@ export const createShiprocketOrder = async (order, weightKg = 0.5, dimensions = 
       transaction_charges: 0,
       total_discount: Number(order.discount || order.discountAmount || 0),
       sub_total: Number(order.totalAmount || order.total || 0),
-      length: Number(dimensions.length) || 20,
-      breadth: Number(dimensions.width) || 15,
-      height: Number(dimensions.height) || 10,
-      weight: Number(weightKg) || 0.5
+      length: Number(dimensions.length) || 15,
+      breadth: Number(dimensions.width) || 12,
+      height: Number(dimensions.height) || 5,
+      weight: Math.min(10, Math.max(0.1, Number(weightKg) || 0.5))
     };
 
     // Add COD amount if applicable

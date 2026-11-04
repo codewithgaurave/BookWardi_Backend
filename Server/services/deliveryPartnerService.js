@@ -209,9 +209,9 @@ export const generateShipmentAwbService = async (orderData, courierCode = "SHIPR
       status: "booked",
       weightKg: Number(weightKg) || 0.5,
       dimensions: {
-        length: Number(dimensions.length) || 20,
-        width: Number(dimensions.width) || 15,
-        height: Number(dimensions.height) || 10
+        length: Number(dimensions.length) || 15,
+        width: Number(dimensions.width) || 12,
+        height: Number(dimensions.height) || 5
       },
       pickupScheduledDate: pickupResult.pickupScheduledDate,
       estimatedDeliveryDate: new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString(),
