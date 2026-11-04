@@ -42,6 +42,7 @@ import schoolRoutes from "./Server/routes/schoolRoutes.js";
 import contactRoutes from "./Server/routes/contactRoutes.js";
 import announcementRoutes from "./Server/routes/announcementRoutes.js";
 import realtimeRoutes from "./Server/routes/realtimeRoutes.js";
+import deliveryPartnerRoutes from "./Server/routes/deliveryPartnerRoutes.js";
 
 import helmet from "helmet";
 import rateLimit from "express-rate-limit";
@@ -213,6 +214,8 @@ app.use("/api/categories", categoryRoutes);
 app.use("/api/orders", orderRoutes);
 app.use("/api/payments", paymentRoutes);
 app.use("/api/delivery", deliveryRoutes);
+app.use("/api/delivery-partners", deliveryPartnerRoutes);
+app.use("/api/delivery-partner", deliveryPartnerRoutes);
 app.use("/api/stores", storeRoutes);
 app.use("/api/schools", schoolRoutes);
 app.use("/api/contact", contactRoutes);

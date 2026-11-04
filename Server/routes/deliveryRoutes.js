@@ -11,6 +11,7 @@ import {
   checkServiceability,
   createShipment,
   trackAwb,
+  getShippingLabel,
   cancelShipment
 } from "../controllers/deliveryPartnerController.js";
 
@@ -22,6 +23,7 @@ router.put("/config", updateDeliveryConfig);
 router.post("/serviceability", checkServiceability);
 router.post("/create-shipment", createShipment);
 router.get("/track/:awb", trackAwb);
+router.get("/label/:orderId", getShippingLabel);
 router.post("/cancel-shipment", cancelShipment);
 
 // Delivery Partner Driver & OTP Endpoints
