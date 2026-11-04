@@ -300,14 +300,15 @@ export const getShippingLabel = async (req, res) => {
     }
 
     const shipmentDetails = order.shipmentDetails || {};
-    let labelUrl = shipmentDetails.shippingLabelUrl || "";
+    let labelUrl = order.shippingLabelUrl || shipmentDetails.shippingLabelUrl || "";
 
     if (!labelUrl) {
-      const shipmentId = shipmentDetails.shiprocketShipmentId || (shipmentDetails.shipments && shipmentDetails.shipments[0]?.shiprocketShipmentId);
+      const shipmentId = order.shiprocketShipmentId || shipmentDetails.shiprocketShipmentId || (shipmentDetails.shipments && shipmentDetails.shipments[0]?.shiprocketShipmentId) || order.shiprocket?.shipmentId;
       if (shipmentId) {
         const labelResult = await getShiprocketLabel(shipmentId);
         if (labelResult?.labelUrl) {
           labelUrl = labelResult.labelUrl;
+          order.shippingLabelUrl = labelUrl;
           order.set("shipmentDetails.shippingLabelUrl", labelUrl, { strict: false });
           await order.save();
         }
@@ -317,8 +318,8 @@ export const getShippingLabel = async (req, res) => {
     res.json({
       success: true,
       labelUrl,
-      awbNumber: order.trackingNumber || "",
-      courierName: order.courierName || ""
+      awbNumber: order.trackingNumber || shipmentDetails.awbNumber || "",
+      courierName: order.courierName || shipmentDetails.courierPartnerName || ""
     });
   } catch (error) {
     res.status(500).json({ success: false, message: "Failed to get shipping label", error: error.message });

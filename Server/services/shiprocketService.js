@@ -334,7 +334,7 @@ export const getShiprocketLabel = async (shipmentId) => {
   try {
     const api = await shiprocketApi();
 
-    const res = await api.post("/orders/print/label", {
+    const res = await api.post("/courier/generate/label", {
       shipment_id: [Number(shipmentId)]
     });
 
