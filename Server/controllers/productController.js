@@ -690,6 +690,14 @@ export const updateProduct = async (req, res) => {
     if (updates.ages !== undefined) updates.ages = parseArray(updates.ages);
     if (updates.colors !== undefined) updates.colors = parseArray(updates.colors);
     if (updates.tags !== undefined) updates.tags = parseArray(updates.tags);
+    const explicitUpdateGst = updates.gst ?? updates.gstPercentage ?? updates.gstPercent ?? updates.gstRate;
+    if (explicitUpdateGst !== undefined && explicitUpdateGst !== null && String(explicitUpdateGst).trim() !== "" && !isNaN(Number(explicitUpdateGst))) {
+      const parsedGstVal = Number(explicitUpdateGst);
+      updates.gst = parsedGstVal;
+      updates.gstPercent = parsedGstVal;
+      updates.gstPercentage = parsedGstVal;
+      updates.gstRate = parsedGstVal;
+    }
     if (updates.isGstInclusive !== undefined) {
       updates.isGstInclusive = parseBool(updates.isGstInclusive, true);
     }

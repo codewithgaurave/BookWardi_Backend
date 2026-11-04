@@ -567,7 +567,7 @@ export const enrichOrdersWithSellerAndConsumer = async (orders) => {
         ? User.find({ _id: { $in: unpopulatedUserIds } }).lean()
         : [],
       neededProductIds.length > 0 
-        ? Product.find({ _id: { $in: neededProductIds } }).select("_id sellerId sellerStoreName storeName unit isMeterBased minMeter meterStep subCategory category name returnPolicy isReturnable isExchangeable isRefundable returnWindowDays").lean()
+        ? Product.find({ _id: { $in: neededProductIds } }).select("_id sellerId sellerStoreName storeName unit isMeterBased minMeter meterStep subCategory category name returnPolicy isReturnable isExchangeable isRefundable returnWindowDays gst gstPercent gstPercentage gstRate isGstInclusive hsnCode").lean()
         : []
     ]);
 
@@ -755,6 +755,26 @@ export const enrichOrdersWithSellerAndConsumer = async (orders) => {
           item.unit = 'meter';
           item.minMeter = Number(pDoc?.minMeter || item.minMeter || 0.5);
           item.meterStep = Number(pDoc?.meterStep || item.meterStep || 0.5);
+        }
+
+        // Dynamically enrich Product & dynamic GST rate
+        if (pDoc) {
+          if (!item.productId || typeof item.productId !== 'object') {
+            item.productId = { ...pDoc };
+          } else {
+            Object.assign(item.productId, pDoc);
+          }
+          const dynamicGst = pDoc.gst ?? pDoc.gstPercentage ?? pDoc.gstPercent ?? pDoc.gstRate;
+          if (dynamicGst !== undefined && dynamicGst !== null && !isNaN(Number(dynamicGst))) {
+            const parsedG = Number(dynamicGst);
+            item.gst = parsedG;
+            item.gstPercent = parsedG;
+            item.gstPercentage = parsedG;
+            item.gstRate = parsedG;
+          }
+          if (pDoc.isGstInclusive !== undefined) {
+            item.isGstInclusive = pDoc.isGstInclusive;
+          }
         }
 
         if (!matchedSeller && pDoc) {
@@ -1153,13 +1173,13 @@ export const getOrderById = async (req, res) => {
     let order = isMongoId
       ? await Order.findById(id)
           .populate("userId", "name email phone addresses")
-          .populate("items.productId", "name price images mrp sellerId sellerStoreName storeName")
+          .populate("items.productId", "name price images mrp sellerId sellerStoreName storeName gst gstPercent gstPercentage gstRate isGstInclusive hsnCode category subCategory")
           .lean()
       : null;
     if (!order) {
       order = await Order.findOne({ $or: [{ orderId: id }, { id: id }] })
         .populate("userId", "name email phone addresses")
-        .populate("items.productId", "name price images mrp sellerId sellerStoreName storeName")
+        .populate("items.productId", "name price images mrp sellerId sellerStoreName storeName gst gstPercent gstPercentage gstRate isGstInclusive hsnCode category subCategory")
         .lean();
     }
     if (!order) {
@@ -1588,17 +1608,23 @@ export const createOrder = async (req, res) => {
       item.sellerCommissionRate = resolvedCommRate;
       item.commissionPercentage = resolvedCommRate;
 
-      // Ensure explicit product-level GST rate set by seller is strictly preserved
-      const explicitGst = item.gstPercent ?? item.gstPercentage ?? item.gstRate ?? item.gst ?? item.taxRate ?? prod?.gstPercent ?? prod?.gstRate ?? prod?.gst ?? prod?.gstPercentage ?? prod?.taxRate;
+      // Ensure explicit product-level dynamic GST rate is strictly preserved (prioritize catalog product)
+      const explicitGst = prod?.gst ?? prod?.gstPercentage ?? prod?.gstPercent ?? prod?.gstRate ?? item.gstPercent ?? item.gstPercentage ?? item.gstRate ?? item.gst ?? item.taxRate;
       let resolvedGst = 5;
       if (explicitGst !== undefined && explicitGst !== null && String(explicitGst).trim() !== "" && !isNaN(Number(explicitGst))) {
         resolvedGst = Number(explicitGst);
+      } else {
+        const cat = String(item.category || prod?.category || "").toLowerCase();
+        const nm = String(item.name || prod?.name || "").toLowerCase();
+        if (cat.includes("book") || nm.includes("book") || cat.includes("textbook") || nm.includes("textbook")) {
+          resolvedGst = 0;
+        }
       }
       item.gst = resolvedGst;
       item.gstPercent = resolvedGst;
       item.gstPercentage = resolvedGst;
       item.gstRate = resolvedGst;
-      item.isGstInclusive = item.isGstInclusive !== undefined ? item.isGstInclusive : (prod?.isGstInclusive !== undefined ? prod.isGstInclusive : true);
+      item.isGstInclusive = prod?.isGstInclusive !== undefined ? prod.isGstInclusive : (item.isGstInclusive !== undefined ? item.isGstInclusive : true);
     }
 
     const orderIdVal = (orderId && !/^[0-9a-fA-F]{24}$/.test(orderId))
@@ -3247,7 +3273,7 @@ export const downloadInvoice = async (req, res) => {
     let order = targetMongoId
       ? await Order.findById(targetMongoId)
           .populate("userId", "name email phone addresses")
-          .populate("items.productId", "name price images mrp sellerId sellerStoreName storeName")
+          .populate("items.productId", "name price images mrp sellerId sellerStoreName storeName gst gstPercent gstPercentage gstRate isGstInclusive hsnCode category subCategory")
       : null;
     if (!order) {
       order = await Order.findOne({ 
@@ -3261,7 +3287,7 @@ export const downloadInvoice = async (req, res) => {
         ] 
       })
         .populate("userId", "name email phone addresses")
-        .populate("items.productId", "name price images mrp sellerId sellerStoreName storeName");
+        .populate("items.productId", "name price images mrp sellerId sellerStoreName storeName gst gstPercent gstPercentage gstRate isGstInclusive hsnCode category subCategory");
     }
 
     let isBulkOrder = false;
@@ -3569,12 +3595,12 @@ export const downloadCreditNote = async (req, res) => {
     let order = isMongoId
       ? await Order.findById(cleanId)
           .populate("userId", "name email phone addresses")
-          .populate("items.productId", "name price images mrp sellerId sellerStoreName storeName")
+          .populate("items.productId", "name price images mrp sellerId sellerStoreName storeName gst gstPercent gstPercentage gstRate isGstInclusive hsnCode category subCategory")
       : null;
     if (!order) {
       order = await Order.findOne({ $or: [{ orderId: cleanId }, { id: cleanId }, { masterOrderId: cleanId }] })
         .populate("userId", "name email phone addresses")
-        .populate("items.productId", "name price images mrp sellerId sellerStoreName storeName");
+        .populate("items.productId", "name price images mrp sellerId sellerStoreName storeName gst gstPercent gstPercentage gstRate isGstInclusive hsnCode category subCategory");
     }
 
     if (!order) {
@@ -3674,12 +3700,12 @@ export const downloadExchangeInvoice = async (req, res) => {
     let order = isMongoId
       ? await Order.findById(cleanId)
           .populate("userId", "name email phone addresses")
-          .populate("items.productId", "name price images mrp sellerId sellerStoreName storeName")
+          .populate("items.productId", "name price images mrp sellerId sellerStoreName storeName gst gstPercent gstPercentage gstRate isGstInclusive hsnCode category subCategory")
       : null;
     if (!order) {
       order = await Order.findOne({ $or: [{ orderId: cleanId }, { id: cleanId }, { masterOrderId: cleanId }] })
         .populate("userId", "name email phone addresses")
-        .populate("items.productId", "name price images mrp sellerId sellerStoreName storeName");
+        .populate("items.productId", "name price images mrp sellerId sellerStoreName storeName gst gstPercent gstPercentage gstRate isGstInclusive hsnCode category subCategory");
     }
 
     if (!order) {

@@ -135,6 +135,14 @@ const productSchema = new mongoose.Schema(
       type: Number,
       default: 5
     },
+    gstPercent: {
+      type: Number,
+      default: 5
+    },
+    gstRate: {
+      type: Number,
+      default: 5
+    },
     isGstInclusive: {
       type: Boolean,
       default: true

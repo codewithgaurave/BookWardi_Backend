@@ -470,6 +470,8 @@ export const createProduct = async (req, res) => {
       brand: brand || "",
       gst: parsedGst,
       gstPercentage: parsedGst,
+      gstPercent: parsedGst,
+      gstRate: parsedGst,
       isGstInclusive: parseBool(req.body.isGstInclusive, true),
       mrp: mrp !== undefined ? Number(mrp) : Number(effectivePrice),
       originalPrice: req.body.originalPrice !== undefined ? Number(req.body.originalPrice) : (mrp !== undefined ? Number(mrp) : Number(effectivePrice)),
@@ -590,12 +592,13 @@ export const updateProduct = async (req, res) => {
     delete updates.createdAt;
     delete updates.updatedAt;
 
-    if (updates.gst !== undefined) {
-      updates.gst = Number(updates.gst);
-      updates.gstPercentage = Number(updates.gst);
-    } else if (updates.gstPercentage !== undefined) {
-      updates.gst = Number(updates.gstPercentage);
-      updates.gstPercentage = Number(updates.gstPercentage);
+    const explicitSellerGst = updates.gst ?? updates.gstPercentage ?? updates.gstPercent ?? updates.gstRate;
+    if (explicitSellerGst !== undefined && explicitSellerGst !== null && String(explicitSellerGst).trim() !== "" && !isNaN(Number(explicitSellerGst))) {
+      const parsedGstVal = Number(explicitSellerGst);
+      updates.gst = parsedGstVal;
+      updates.gstPercent = parsedGstVal;
+      updates.gstPercentage = parsedGstVal;
+      updates.gstRate = parsedGstVal;
     }
 
     if (updates.isGstInclusive !== undefined) {

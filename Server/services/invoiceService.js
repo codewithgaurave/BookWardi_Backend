@@ -742,7 +742,7 @@ export const generateTaxInvoicePDF = (order, filterSellerId = null, options = {}
 
   // 5. ITEMS ROWS (itemsToRender already pre-filtered and validated above)
   const getProductGstRate = (item) => {
-    const explicitGst = item.gstPercent ?? item.gstPercentage ?? item.gstRate ?? item.gst ?? item.taxRate ?? item.productId?.gstPercent ?? item.productId?.gstRate ?? item.productId?.gst ?? item.productId?.gstPercentage ?? item.productId?.taxRate;
+    const explicitGst = item?.productId?.gst ?? item?.productId?.gstPercentage ?? item?.productId?.gstPercent ?? item?.productId?.gstRate ?? item?.productId?.taxRate ?? item?.gstPercent ?? item?.gstPercentage ?? item?.gstRate ?? item?.gst ?? item?.taxRate;
     if (explicitGst !== undefined && explicitGst !== null && String(explicitGst).trim() !== '' && !isNaN(Number(explicitGst))) {
       return Number(explicitGst);
     }
@@ -1708,7 +1708,7 @@ export const maskFinancialAccount = (details) => {
  * Helper to determine Product-level GST Rate set by seller
  */
 const getProductGstRate = (item) => {
-  const explicitGst = item?.gstPercent ?? item?.gstPercentage ?? item?.gstRate ?? item?.gst ?? item?.taxRate ?? item?.productId?.gstPercent ?? item?.productId?.gstRate ?? item?.productId?.gst ?? item?.productId?.gstPercentage ?? item?.productId?.taxRate;
+  const explicitGst = item?.productId?.gst ?? item?.productId?.gstPercentage ?? item?.productId?.gstPercent ?? item?.productId?.gstRate ?? item?.productId?.taxRate ?? item?.gstPercent ?? item?.gstPercentage ?? item?.gstRate ?? item?.gst ?? item?.taxRate;
   if (explicitGst !== undefined && explicitGst !== null && String(explicitGst).trim() !== '' && !isNaN(Number(explicitGst))) {
     return Number(explicitGst);
   }
