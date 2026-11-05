@@ -353,7 +353,7 @@ const orderSchema = new mongoose.Schema(
       default: ""
     },
     refundDetails: {
-      method: { type: String, enum: ["UPI", "BANK", ""], default: "" },
+      method: { type: String, default: "" },
       upiId: { type: String, default: "" },
       bankName: { type: String, default: "" },
       accountNumber: { type: String, default: "" },
@@ -432,7 +432,7 @@ const orderSchema = new mongoose.Schema(
       replacementItemPrice: { type: Number, default: 0 },
       refundMethod: { type: String, default: "Original Payment Method" },
       refundDetails: {
-        method: { type: String, enum: ["UPI", "BANK", ""], default: "" },
+        method: { type: String, default: "" },
         upiId: { type: String, default: "" },
         bankName: { type: String, default: "" },
         accountNumber: { type: String, default: "" },

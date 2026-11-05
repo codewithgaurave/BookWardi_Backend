@@ -4096,13 +4096,13 @@ export const requestReturnExchange = async (req, res) => {
     }
 
     const formattedRefundDetails = refundDetails ? {
-      method: refundDetails.method || (refundDetails.upiId ? "UPI" : "BANK"),
+      method: refundDetails.method || (refundDetails.upiId ? "UPI" : (refundDetails.accountNumber ? "BANK" : "ORIGINAL_SOURCE")),
       upiId: refundDetails.upiId || "",
       bankName: refundDetails.bankName || "",
       accountNumber: refundDetails.accountNumber || "",
       ifscCode: refundDetails.ifscCode || "",
       accountHolderName: refundDetails.accountHolderName || ""
-    } : { method: "", upiId: "", bankName: "", accountNumber: "", ifscCode: "", accountHolderName: "" };
+    } : { method: "ORIGINAL_SOURCE", upiId: "", bankName: "", accountNumber: "", ifscCode: "", accountHolderName: "" };
 
     const newOverallStatus = type === "exchange" ? "exchange_requested" : "return_requested";
     order.overallStatus = newOverallStatus;
@@ -4168,7 +4168,11 @@ export const requestReturnExchange = async (req, res) => {
       const modeStr = formattedRefundDetails.method === "UPI" ? `UPI (${formattedRefundDetails.upiId})` : `Bank (${formattedRefundDetails.bankName})`;
       timelineDesc += ` • Partial refund: ₹${Math.abs(priceDifference)} to ${modeStr}.`;
     } else if (type === "return" && formattedRefundDetails.method) {
-      const modeStr = formattedRefundDetails.method === "UPI" ? `UPI (${formattedRefundDetails.upiId})` : `Bank (${formattedRefundDetails.bankName})`;
+      const modeStr = formattedRefundDetails.method === "UPI"
+        ? `UPI (${formattedRefundDetails.upiId})`
+        : (formattedRefundDetails.method === "BANK"
+          ? `Bank (${formattedRefundDetails.bankName})`
+          : `Original Source (Razorpay)`);
       timelineDesc += ` • Receiving account: ${modeStr}.`;
     }
 
