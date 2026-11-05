@@ -1,5 +1,6 @@
 import Order from "../models/Order.js";
 import Seller from "../models/Seller.js";
+import { getSellerInvoicePrefix, formatSellerCreditNoteNumber } from "../utils/invoiceHelper.js";
 
 /**
  * BookVardi Seller Settlement Rules Engine
@@ -963,8 +964,16 @@ export async function reconcileSellerSettlementBalances(sellerId, options = {}) 
           order.sellerPayout = 0;
           order.sellerSettlement = 0;
           order.netSettlementAmount = 0;
-          const displayId = order.orderId || order.id || String(order._id).slice(-8).toUpperCase();
-          order.creditNoteNumber = order.creditNoteNumber || `CN-${displayId}`;
+          if (!order.sellerCreditNoteNo || !/^[A-Z0-9]{2,}CN\d+$/i.test(order.sellerCreditNoteNo)) {
+            const cnPrefix = getSellerInvoicePrefix(order.sellerStoreName || order.items?.[0]?.storeName || "Store");
+            const seq = order.sellerCreditNoteSequence || 1;
+            const seqCn = formatSellerCreditNoteNumber(cnPrefix, seq);
+            order.sellerCreditNoteNo = seqCn;
+            order.creditNoteNumber = seqCn;
+            order.sellerCreditNoteSequence = seq;
+          } else {
+            order.creditNoteNumber = order.sellerCreditNoteNo;
+          }
           order.creditNoteIssuedAt = order.creditNoteIssuedAt || now;
         } else if (order.isSettlementMatured && order.settlementStatus !== 'settled') {
           order.settlementStatus = 'settled';

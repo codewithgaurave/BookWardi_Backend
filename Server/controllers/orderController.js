@@ -2421,7 +2421,7 @@ export const trackOrder = async (req, res) => {
   }
 };
 
-async function resolveNextCreditNote(order) {
+export async function resolveNextCreditNote(order, OrderModel = Order) {
   if (order.sellerCreditNoteNo && /^[A-Z0-9]{2,}CN\d+$/i.test(order.sellerCreditNoteNo)) {
     return {
       creditNoteNo: order.sellerCreditNoteNo,
@@ -2441,7 +2441,7 @@ async function resolveNextCreditNote(order) {
 
   let maxCnSeq = 0;
   try {
-    const sellerOrdersWithCn = await Order.find(filter)
+    const sellerOrdersWithCn = await OrderModel.find(filter)
       .select("sellerCreditNoteSequence sellerCreditNoteNo creditNoteNumber")
       .lean();
 
@@ -3514,15 +3514,7 @@ export const downloadInvoice = async (req, res) => {
     }
 
     const orderStatusVal = String(enrichedOrder.overallStatus || enrichedOrder.status || "").toLowerCase().trim();
-    const { generateTaxInvoicePDF, generateCreditNotePDF } = await import("../services/invoiceService.js");
-
-    if (orderStatusVal === "cancelled") {
-      const filename = `CreditNote_${enrichedOrder.orderId || enrichedOrder._id}.pdf`;
-      res.setHeader("Content-Type", "application/pdf");
-      res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
-      const pdfDoc = generateCreditNotePDF(enrichedOrder);
-      return pdfDoc.pipe(res);
-    }
+    const { generateTaxInvoicePDF } = await import("../services/invoiceService.js");
 
     const filterSellerId = req.query.sellerId || req.headers["x-seller-id"] || null;
     let itemsToCheck = enrichedOrder.items || [];
@@ -3587,8 +3579,6 @@ export const downloadInvoice = async (req, res) => {
       ? `Invoice_${enrichedOrder.orderId || enrichedOrder._id}_${String(filterSellerId).slice(-6)}.pdf`
       : `Invoice_${enrichedOrder.orderId || enrichedOrder._id}.pdf`;
 
-    res.setHeader("Content-Type", "application/pdf");
-    res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
     const viewQuery = String(req.query.view || req.query.audience || req.headers["x-view"] || "").toLowerCase();
     const isSellerRole = req.user?.role === "seller" || req.headers["x-is-seller"] === "true";
     const isExplicitSellerView = viewQuery === "seller" || viewQuery === "admin" || (isSellerRole && viewQuery !== "customer");
@@ -3608,6 +3598,9 @@ export const downloadInvoice = async (req, res) => {
       supportEmail: platformSettings.supportEmail || platformSettings.customerCareEmail,
       supportPhone: platformSettings.supportPhone || platformSettings.customerCarePhone
     });
+
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
     pdfDoc.pipe(res);
   } catch (error) {
     console.error("Download invoice error:", error);
@@ -3683,8 +3676,18 @@ export const downloadCreditNote = async (req, res) => {
     const isReturn = reqType === "return" || orderOverallStatus.includes("return") || returnStatus.includes("return");
     const isCancelled = orderOverallStatus === "cancelled" || Boolean(enrichedOrder.cancelledAt);
 
-    // Statutory Check: Credit Note is generated ONLY after return is accepted / approved by store
-    if (isReturn && !isCancelled) {
+    const hasCompletedRefund = Boolean(
+      ['refund_completed', 'refunded', 'completed', 'refund_processed'].includes(String(enrichedOrder.returnRequest?.refundStatus || '').toLowerCase().trim()) ||
+      ['refund completed', 'refund_completed', 'refunded', 'completed', 'refund processed', 'refund_processed'].includes(String(enrichedOrder.refundStatus || '').toLowerCase().trim()) ||
+      enrichedOrder.settlementStatus === 'refunded' ||
+      Boolean(enrichedOrder.returnRequest?.refundTxnId) ||
+      Boolean(enrichedOrder.refundTxnId) ||
+      Boolean(enrichedOrder.sellerCreditNoteNo) ||
+      Boolean(enrichedOrder.creditNoteNumber)
+    );
+
+    // Statutory Check: Credit Note is generated ONLY after return is accepted / approved by store OR refund is completed
+    if (isReturn && !isCancelled && !hasCompletedRefund) {
       const acceptedStatuses = [
         'approved', 'return_approved', 'pickup_scheduled',
         'product_received', 'product_return_received',
@@ -3699,10 +3702,6 @@ export const downloadCreditNote = async (req, res) => {
     }
 
     const { generateCreditNotePDF } = await import("../services/invoiceService.js");
-    const filename = `CreditNote_${enrichedOrder.orderId || enrichedOrder._id}.pdf`;
-
-    res.setHeader("Content-Type", "application/pdf");
-    res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
 
     let platformSettings = {};
     try {
@@ -3716,6 +3715,11 @@ export const downloadCreditNote = async (req, res) => {
       companyAddress: platformSettings.companyAddress,
       companyGstin: platformSettings.companyGstin
     });
+
+    const filename = `CreditNote_${enrichedOrder.orderId || enrichedOrder._id}.pdf`;
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+
     pdfDoc.pipe(res);
   } catch (error) {
     console.error("Download credit note error:", error);

@@ -15,6 +15,7 @@ const categorySchema = new mongoose.Schema({
   bgColor: { type: String, default: 'var(--color-brand-teal-subtle)' },
   icon: { type: String, default: 'Package' },
   imageUrl: { type: String, default: '' },
+  image: { type: String, default: '' },
   gstPercentage: { type: Number, default: 5, min: 0, max: 28 },
   subCategories: [subCategorySchema],
   productCount: { type: Number, default: 0 },

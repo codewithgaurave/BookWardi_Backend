@@ -125,11 +125,26 @@ export const getSellerCreditNoteNumber = (order, seller = null, allOrders = []) 
   // Calculate chronological sequence among credit note orders
   if (Array.isArray(allOrders) && allOrders.length > 0) {
     const targetOrderId = String(order.id || order.orderId || order._id || '');
+    const targetStore = String(storeName).trim().toLowerCase();
     const cnOrders = allOrders
-      .filter(o => o.creditNoteNumber || o.sellerCreditNoteNo || o.sellerCreditNoteSequence || o.isCancelled || ['refunded', 'refund_completed'].includes(String(o.status || '').toLowerCase()) || String(o.returnRequest?.type || '').toLowerCase() === 'exchange')
+      .filter(o => {
+        const oStore = String(o.sellerStoreName || o.storeName || o.sellerDetails?.storeName || o.sellerDetails?.name || '').trim().toLowerCase();
+        if (targetStore && oStore && oStore !== targetStore && !oStore.includes(targetStore) && !targetStore.includes(oStore)) {
+          return false;
+        }
+        const st = String(o.status || o.overallStatus || '').toLowerCase();
+        const retType = String(o.returnRequest?.type || o.returnRequest?.requestType || '').toLowerCase();
+        const retSt = String(o.returnRequest?.status || o.returnRequest?.refundStatus || '').toLowerCase();
+        const refSt = String(o.refundStatus || '').toLowerCase();
+        return o.creditNoteNumber || o.sellerCreditNoteNo || o.sellerCreditNoteSequence || o.isCancelled || o.cancelledAt ||
+          ['refunded', 'refund_completed', 'refund_processed', 'completed'].includes(st) ||
+          ['refunded', 'refund_completed', 'refund_processed', 'completed'].includes(retSt) ||
+          refSt.includes('completed') || refSt.includes('refunded') ||
+          retType === 'exchange' || retType === 'return';
+      })
       .sort((a, b) => {
-        const timeA = new Date(a.returnRequest?.updatedAt || a.cancelledAt || a.createdAt || a.date || 0).getTime() || 0;
-        const timeB = new Date(b.returnRequest?.updatedAt || b.cancelledAt || b.createdAt || b.date || 0).getTime() || 0;
+        const timeA = new Date(a.returnRequest?.updatedAt || a.returnRequest?.requestedAt || a.cancelledAt || a.refundDetails?.refundedAt || a.createdAt || a.date || 0).getTime() || 0;
+        const timeB = new Date(b.returnRequest?.updatedAt || b.returnRequest?.requestedAt || b.cancelledAt || b.refundDetails?.refundedAt || b.createdAt || b.date || 0).getTime() || 0;
         if (timeA !== timeB) return timeA - timeB;
         return String(a._id || a.id || '').localeCompare(String(b._id || b.id || ''));
       });

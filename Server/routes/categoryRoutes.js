@@ -13,7 +13,12 @@ async function getCategoriesFromDB() {
 router.get('/', async (req, res) => {
   try {
     const categories = await getCategoriesFromDB();
-    res.json(categories);
+    const formatted = categories.map(c => {
+      const obj = c.toObject ? c.toObject() : c;
+      const img = obj.imageUrl || obj.image || '';
+      return { ...obj, imageUrl: img, image: img };
+    });
+    res.json(formatted);
   } catch (error) {
     res.status(500).json({ message: 'Server error', error: error.message });
   }
@@ -23,7 +28,12 @@ router.get('/', async (req, res) => {
 router.get('/tree', async (req, res) => {
   try {
     const categories = await getCategoriesFromDB();
-    res.json(categories);
+    const formatted = categories.map(c => {
+      const obj = c.toObject ? c.toObject() : c;
+      const img = obj.imageUrl || obj.image || '';
+      return { ...obj, imageUrl: img, image: img };
+    });
+    res.json(formatted);
   } catch (error) {
     res.status(500).json({ message: 'Server error', error: error.message });
   }
@@ -32,7 +42,8 @@ router.get('/tree', async (req, res) => {
 // Create category
 router.post('/', authenticateToken, async (req, res) => {
   try {
-    const { name, description, gstPercentage, icon, accentColor, bgColor, subCategories, imageUrl, sortOrder } = req.body;
+    const { name, description, gstPercentage, icon, accentColor, bgColor, subCategories, imageUrl, image, sortOrder } = req.body;
+    const finalImage = imageUrl || image || '';
     const category = new Category({
       name,
       slug: name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, ''),
@@ -44,7 +55,8 @@ router.post('/', authenticateToken, async (req, res) => {
       subCategories: Array.isArray(subCategories)
         ? subCategories.map(s => typeof s === 'string' ? { name: s, slug: s.toLowerCase().replace(/[^a-z0-9]+/g, '-') } : s)
         : [],
-      imageUrl,
+      imageUrl: finalImage,
+      image: finalImage,
       sortOrder: sortOrder || 0
     });
     await category.save();
@@ -60,7 +72,12 @@ router.post('/', authenticateToken, async (req, res) => {
 router.put('/:id', authenticateToken, async (req, res) => {
   try {
     const { id } = req.params;
-    const updates = req.body;
+    const updates = { ...req.body };
+    if (updates.image !== undefined || updates.imageUrl !== undefined) {
+      const finalImage = updates.imageUrl !== undefined ? updates.imageUrl : updates.image;
+      updates.imageUrl = finalImage || '';
+      updates.image = finalImage || '';
+    }
     if (updates.subCategories && Array.isArray(updates.subCategories)) {
       updates.subCategories = updates.subCategories.map(s => typeof s === 'string' ? { name: s, slug: s.toLowerCase().replace(/[^a-z0-9]+/g, '-') } : s);
     }

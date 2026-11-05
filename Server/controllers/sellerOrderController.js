@@ -3,7 +3,7 @@ import Order, { generateProductOrderId } from "../models/Order.js";
 import Product from "../models/Product.js";
 import Seller from "../models/Seller.js";
 import User from "../models/User.js";
-import { enrichOrdersWithSellerAndConsumer, findOrderById, calculateOverallOrderStatus, STAGE_RANK, invalidateOrdersCache } from "./orderController.js";
+import { enrichOrdersWithSellerAndConsumer, findOrderById, calculateOverallOrderStatus, STAGE_RANK, invalidateOrdersCache, resolveNextCreditNote } from "./orderController.js";
 import { sendDeliveryPartnerWhatsAppDispatch } from "../services/whatsappService.js";
 import { broadcastRealtimeEvent } from "../services/realtimeService.js";
 import { calculateSellerSettlement } from "../services/settlementService.js";
@@ -381,35 +381,40 @@ export const formatSellerSingleOrder = (o, scope = null) => {
 
   const resolvedSubtotal = computedItemsSubtotal;
 
-  // Check cancellation first: a cancelled order must strictly be Cancelled
-  const isCancelledOrderEarly = Boolean(
-    o.cancelledAt ||
-    String(o.overallStatus || o.status || '').toLowerCase().includes('cancel') ||
-    o.cancellationReason ||
-    String(o.refundStatus || '').toLowerCase().includes('refund') ||
-    o.settlementStatus === "refunded"
-  );
-
-  // Compute status strictly from THIS seller's items to prevent other sellers' changes from corrupting this dashboard
-  const sellerComputedStatus = isCancelledOrderEarly ? "Cancelled" : (relevantItems.length > 0 ? calculateOverallOrderStatus(relevantItems, o) : null);
-  const sellerItemStatus = relevantItems.find(i => i.status && normalizeOrderStatus(i.status, o) !== "Pending")?.status;
+  // 1. Check for active Return or Exchange request FIRST
   const hasActiveReturnRequest = o.returnRequest &&
     typeof o.returnRequest === "object" &&
     Boolean(o.returnRequest.type && !['none', 'n/a', '', 'null'].includes(String(o.returnRequest.type).toLowerCase().trim())) &&
     Boolean(o.returnRequest.status && !['none', 'n/a', 'no_request', 'normal', 'null', ''].includes(String(o.returnRequest.status).toLowerCase().trim()));
 
+  // 2. Pre-delivery cancellation is strictly for orders cancelled BEFORE delivery, and NEVER for return/exchange orders!
+  const isCancelledOrderEarly = !hasActiveReturnRequest && Boolean(
+    o.cancelledAt ||
+    (String(o.overallStatus || o.status || '').toLowerCase().includes('cancel') && !hasActiveReturnRequest) ||
+    (o.cancellationReason && !hasActiveReturnRequest)
+  );
+
+  // Compute status strictly from THIS seller's items to prevent other sellers' changes from corrupting this dashboard
+  const sellerComputedStatus = isCancelledOrderEarly ? "Cancelled" : (relevantItems.length > 0 ? calculateOverallOrderStatus(relevantItems, o) : null);
+  const sellerItemStatus = relevantItems.find(i => i.status && normalizeOrderStatus(i.status, o) !== "Pending")?.status;
+
   const reqType = String(o.returnRequest?.type || '').toLowerCase();
-  const rawStatus = isCancelledOrderEarly ? "cancelled" : hasActiveReturnRequest
+  const rawRetStatus = String(o.returnRequest?.status || '').toLowerCase().trim().replace(/[\s-]+/g, '_');
+  const rawStatus = hasActiveReturnRequest
     ? (
-        o.returnRequest.status === 'requested'
+        rawRetStatus === 'requested'
           ? (reqType === 'exchange' ? 'exchange_requested' : 'return_requested')
-          : o.returnRequest.status === 'approved'
+          : rawRetStatus === 'approved'
           ? (reqType === 'exchange' ? 'exchange_approved' : 'return_approved')
-          : o.returnRequest.status === 'rejected'
+          : rawRetStatus === 'rejected'
           ? (reqType === 'exchange' ? 'exchange_rejected' : 'return_rejected')
-          : o.returnRequest.status
+          : (['refund_completed', 'refund_processed', 'refunded'].includes(rawRetStatus)
+              ? 'refund_completed'
+              : rawRetStatus)
       )
-    : (sellerComputedStatus || sellerItemStatus || o.overallStatus || o.status || "Pending");
+    : (isCancelledOrderEarly
+        ? "cancelled"
+        : (sellerComputedStatus || sellerItemStatus || o.overallStatus || o.status || "Pending"));
 
   // Dynamic Rule: Order confirmation happens strictly on delivery partner selection, not before!
   const hasDeliveryPartner = Boolean(
@@ -419,9 +424,11 @@ export const formatSellerSingleOrder = (o, scope = null) => {
     Boolean(orderItems[0]?.thirdPartyDetails?.courierName)
   );
   const isTerminalOrDispatched = ["shipped", "in_transit", "out_for_delivery", "delivered", "completed", "cancelled", "refunded"].includes(String(rawStatus).toLowerCase().trim().replace(/[\s-]+/g, '_'));
-  const effectiveRawStatus = (!hasActiveReturnRequest && !isTerminalOrDispatched && !hasDeliveryPartner && String(rawStatus).toLowerCase().includes("confirm"))
-    ? "Pending"
-    : rawStatus;
+  const effectiveRawStatus = isCancelledOrderEarly
+    ? "cancelled"
+    : ((!hasActiveReturnRequest && !isTerminalOrDispatched && !hasDeliveryPartner && String(rawStatus).toLowerCase().includes("confirm"))
+        ? "Pending"
+        : rawStatus);
 
   const formattedStatus = isCancelledOrderEarly ? "Cancelled" : normalizeOrderStatus(effectiveRawStatus, o);
 
@@ -447,13 +454,17 @@ export const formatSellerSingleOrder = (o, scope = null) => {
   const ordTotalVal = Number(resolvedOrderTotal || o.totalAmount || o.total || 0);
   const sellerStateVal = scope?.state || scope?.storeDetails?.state || o.sellerDetails?.state || orderItems[0]?.sellerDetails?.state || "Uttar Pradesh";
   const customerStateVal = shippingAddressObj?.state || o.shippingAddress?.state || customerObj?.state || "Uttar Pradesh";
-  const isCancelledOrder = rawStatus.includes("cancel") || 
-                           rawStatus.includes("refund") || 
-                           String(o.refundStatus || "").toLowerCase().includes("completed") || 
-                           String(o.refundStatus || "").toLowerCase().includes("refunded") || 
-                           Boolean(o.cancelledAt) || 
-                           o.settlementStatus === "refunded" || 
-                           o.settlementStatus === "cancelled";
+  const isCancelledOrder = !hasActiveReturnRequest && (
+    rawStatus.includes("cancel") || 
+    Boolean(o.cancelledAt) || 
+    Boolean(o.cancellationReason) || 
+    o.settlementStatus === "cancelled"
+  );
+  const isRefundedOrCancelled = isCancelledOrder || 
+    rawStatus.includes("refund") || 
+    String(o.refundStatus || "").toLowerCase().includes("completed") || 
+    String(o.refundStatus || "").toLowerCase().includes("refunded") || 
+    o.settlementStatus === "refunded";
 
   const settlementGross = Math.max(0, Math.round((computedItemsSubtotal - resolvedDiscount) * 100) / 100);
 
@@ -492,8 +503,20 @@ export const formatSellerSingleOrder = (o, scope = null) => {
     invoiceNumber: o.invoiceNumber || formatSellerInvoiceNumber(getSellerInvoicePrefix(scope?.storeName || o.sellerStoreName), 1),
     sellerInvoiceNo: o.sellerInvoiceNo || o.invoiceNumber || formatSellerInvoiceNumber(getSellerInvoicePrefix(scope?.storeName || o.sellerStoreName), 1),
     sellerSequence: o.sellerSequence || 1,
-    creditNoteNumber: o.creditNoteNumber || o.sellerCreditNoteNo || "",
-    sellerCreditNoteNo: o.sellerCreditNoteNo || o.creditNoteNumber || "",
+    creditNoteNumber: (o.sellerCreditNoteNo && /^[A-Z0-9]{2,}CN\d+$/i.test(o.sellerCreditNoteNo))
+      ? o.sellerCreditNoteNo
+      : (o.creditNoteNumber && /^[A-Z0-9]{2,}CN\d+$/i.test(o.creditNoteNumber))
+        ? o.creditNoteNumber
+        : (o.sellerCreditNoteSequence && Number(o.sellerCreditNoteSequence) > 0)
+          ? formatSellerInvoiceNumber(getSellerInvoicePrefix(scope?.storeName || o.sellerStoreName), o.sellerCreditNoteSequence).replace(/^([A-Z0-9]+)/, '$1CN')
+          : "",
+    sellerCreditNoteNo: (o.sellerCreditNoteNo && /^[A-Z0-9]{2,}CN\d+$/i.test(o.sellerCreditNoteNo))
+      ? o.sellerCreditNoteNo
+      : (o.creditNoteNumber && /^[A-Z0-9]{2,}CN\d+$/i.test(o.creditNoteNumber))
+        ? o.creditNoteNumber
+        : (o.sellerCreditNoteSequence && Number(o.sellerCreditNoteSequence) > 0)
+          ? formatSellerInvoiceNumber(getSellerInvoicePrefix(scope?.storeName || o.sellerStoreName), o.sellerCreditNoteSequence).replace(/^([A-Z0-9]+)/, '$1CN')
+          : "",
     sellerCreditNoteSequence: o.sellerCreditNoteSequence || 0,
     exchangeInvoiceNumber: o.exchangeInvoiceNumber || o.sellerExchangeInvoiceNo || "",
     sellerExchangeInvoiceNo: o.sellerExchangeInvoiceNo || o.exchangeInvoiceNumber || "",
@@ -537,9 +560,9 @@ export const formatSellerSingleOrder = (o, scope = null) => {
       formattedStatus.toLowerCase().includes("delivered") ||
       String(o.overallStatus || o.status || "").toLowerCase().includes("delivered")
     ) ? "Paid" : (o.paymentStatus || (String(o.paymentMethod || "").toUpperCase().includes("COD") ? "Pending" : "Paid")),
-    cancellationReason: o.cancellationReason || "",
-    cancelledBy: o.cancelledBy || (o.cancellationReason ? "Customer" : ""),
-    cancelledAt: o.cancelledAt || null,
+    cancellationReason: (!hasActiveReturnRequest && o.cancellationReason) ? o.cancellationReason : "",
+    cancelledBy: (!hasActiveReturnRequest && (o.cancelledBy || (o.cancellationReason ? "Customer" : ""))) ? (o.cancelledBy || "Customer") : "",
+    cancelledAt: (!hasActiveReturnRequest && o.cancelledAt) ? o.cancelledAt : null,
     refundStatus: o.refundStatus || "",
     returnRequest: o.returnRequest || null,
     refundDetails: o.refundDetails || o.returnRequest?.refundDetails || null,
@@ -1682,8 +1705,18 @@ export const downloadSellerCreditNote = async (req, res) => {
     const isReturn = reqType === "return" || orderOverallStatus.includes("return") || returnStatus.includes("return");
     const isCancelled = orderOverallStatus === "cancelled" || Boolean(enrichedOrder.cancelledAt);
 
-    // Statutory Check: Credit Note is generated ONLY after return is accepted / approved by store
-    if (isReturn && !isCancelled) {
+    const hasCompletedRefund = Boolean(
+      ['refund_completed', 'refunded', 'completed', 'refund_processed'].includes(String(enrichedOrder.returnRequest?.refundStatus || '').toLowerCase().trim()) ||
+      ['refund completed', 'refund_completed', 'refunded', 'completed', 'refund processed', 'refund_processed'].includes(String(enrichedOrder.refundStatus || '').toLowerCase().trim()) ||
+      enrichedOrder.settlementStatus === 'refunded' ||
+      Boolean(enrichedOrder.returnRequest?.refundTxnId) ||
+      Boolean(enrichedOrder.refundTxnId) ||
+      Boolean(enrichedOrder.sellerCreditNoteNo) ||
+      Boolean(enrichedOrder.creditNoteNumber)
+    );
+
+    // Statutory Check: Credit Note is generated ONLY after return is accepted / approved by store OR refund is completed
+    if (isReturn && !isCancelled && !hasCompletedRefund) {
       const acceptedStatuses = [
         'approved', 'return_approved', 'pickup_scheduled',
         'product_received', 'product_return_received',
@@ -1698,9 +1731,6 @@ export const downloadSellerCreditNote = async (req, res) => {
     }
 
     const { generateCreditNotePDF } = await import("../services/invoiceService.js");
-    const filename = `Seller_CreditNote_${enrichedOrder.orderId || enrichedOrder._id}.pdf`;
-    res.setHeader("Content-Type", "application/pdf");
-    res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
 
     let platformSettings = {};
     try {
@@ -1714,6 +1744,16 @@ export const downloadSellerCreditNote = async (req, res) => {
       companyAddress: platformSettings.companyAddress,
       companyGstin: platformSettings.companyGstin
     });
+
+    const cnDisplayName = (enrichedOrder.sellerCreditNoteNo && /^[A-Z0-9]{2,}CN\d+$/i.test(enrichedOrder.sellerCreditNoteNo))
+      ? enrichedOrder.sellerCreditNoteNo
+      : (enrichedOrder.creditNoteNumber && /^[A-Z0-9]{2,}CN\d+$/i.test(enrichedOrder.creditNoteNumber))
+        ? enrichedOrder.creditNoteNumber
+        : (enrichedOrder.orderId || enrichedOrder._id);
+    const filename = `Seller_CreditNote_${cnDisplayName}.pdf`;
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+
     pdfDoc.pipe(res);
   } catch (error) {
     console.error("Seller credit note download error:", error);
@@ -1824,6 +1864,18 @@ export const handleSellerCancellationRefund = async (req, res) => {
         refundedBy: sellerInfo.storeName || "Seller"
       };
 
+      if (!order.sellerCreditNoteNo || !/^[A-Z0-9]{2,}CN\d+$/i.test(order.sellerCreditNoteNo)) {
+        try {
+          const cnRes = await resolveNextCreditNote(order, Order);
+          order.sellerCreditNoteNo = cnRes.creditNoteNo;
+          order.creditNoteNumber = cnRes.creditNoteNo;
+          order.sellerCreditNoteSequence = cnRes.creditNoteSequence;
+          order.creditNoteIssuedAt = order.creditNoteIssuedAt || new Date();
+        } catch (cnErr) {
+          console.warn("⚠️ [BACKEND] Failed to resolve credit note on complete_refund:", cnErr.message);
+        }
+      }
+
       order.timeline = order.timeline || [];
       order.timeline.push({
         status: "refunded",
@@ -1897,6 +1949,18 @@ export const handleSellerCancellationRefund = async (req, res) => {
           refundedAt: new Date(),
           refundedBy: sellerInfo.storeName || "Seller"
         };
+
+        if (!order.sellerCreditNoteNo || !/^[A-Z0-9]{2,}CN\d+$/i.test(order.sellerCreditNoteNo)) {
+          try {
+            const cnRes = await resolveNextCreditNote(order, Order);
+            order.sellerCreditNoteNo = cnRes.creditNoteNo;
+            order.creditNoteNumber = cnRes.creditNoteNo;
+            order.sellerCreditNoteSequence = cnRes.creditNoteSequence;
+            order.creditNoteIssuedAt = order.creditNoteIssuedAt || new Date();
+          } catch (cnErr) {
+            console.warn("⚠️ [BACKEND] Failed to resolve credit note on rzp refund:", cnErr.message);
+          }
+        }
         await order.save();
 
         try {

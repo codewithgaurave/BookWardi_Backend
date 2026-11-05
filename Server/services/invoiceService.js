@@ -1749,9 +1749,9 @@ export const generateCreditNotePDF = (order, filterSellerId = null, options = {}
     : (order.sellerInvoiceNo && !order.sellerInvoiceNo.startsWith("INV-"))
       ? order.sellerInvoiceNo
       : formatSellerInvoiceNumber(cnPrefix, order.sellerSequence || 1);
-  const creditNoteNo = (order.sellerCreditNoteNo && !order.sellerCreditNoteNo.startsWith("CN-INV-"))
+  const creditNoteNo = (order.sellerCreditNoteNo && /^[A-Z0-9]{2,}CN\d+$/i.test(order.sellerCreditNoteNo))
     ? order.sellerCreditNoteNo
-    : (order.creditNoteNumber && !order.creditNoteNumber.startsWith("CN-INV-") && !order.creditNoteNumber.startsWith("CN-ORDER"))
+    : (order.creditNoteNumber && /^[A-Z0-9]{2,}CN\d+$/i.test(order.creditNoteNumber))
       ? order.creditNoteNumber
       : formatSellerCreditNoteNumber(cnPrefix, order.sellerCreditNoteSequence || order.sellerSequence || 1);
 
@@ -1764,8 +1764,18 @@ export const generateCreditNotePDF = (order, filterSellerId = null, options = {}
   const isReturn = reqType === "return" || orderOverallStatus.includes("return") || returnStatus.includes("return") || orderOverallStatus === "product_received" || orderOverallStatus === "product_return_received" || orderOverallStatus.includes("refund");
   const isCancelled = orderOverallStatus === "cancelled" || Boolean(order.cancelledAt);
 
-  // Statutory Requirement: Credit Note can ONLY be generated after Return/Exchange is accepted/approved by seller
-  if ((isReturn || isExchange) && !isCancelled) {
+  const hasCompletedRefundCN = Boolean(
+    ['refund_completed', 'refunded', 'completed', 'refund_processed'].includes(String(order.returnRequest?.refundStatus || '').toLowerCase().trim()) ||
+    ['refund completed', 'refund_completed', 'refunded', 'completed', 'refund processed', 'refund_processed'].includes(String(order.refundStatus || '').toLowerCase().trim()) ||
+    order.settlementStatus === 'refunded' ||
+    Boolean(order.returnRequest?.refundTxnId) ||
+    Boolean(order.refundTxnId) ||
+    Boolean(order.sellerCreditNoteNo) ||
+    Boolean(order.creditNoteNumber)
+  );
+
+  // Statutory Requirement: Credit Note can ONLY be generated after Return/Exchange is accepted/approved by seller OR refund is completed
+  if ((isReturn || isExchange) && !isCancelled && !hasCompletedRefundCN) {
     const acceptedStatuses = [
       'approved', 'return_approved', 'exchange_approved', 'exchange_dispatched', 'exchanged', 'completed',
       'pickup_scheduled', 'product_received', 'product_return_received',
