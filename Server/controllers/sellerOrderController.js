@@ -1872,13 +1872,15 @@ export const handleSellerCancellationRefund = async (req, res) => {
       }
 
       const rzpRes = await processRazorpayRefund({
+        order,
         paymentId,
         amount: refundAmount,
         notes: {
           orderId: order.orderId,
           sellerName: sellerInfo.storeName || "Seller",
           reason: order.cancellationReason || "Pre-delivery customer cancellation"
-        }
+        },
+        reverseSplit: true
       });
 
       if (rzpRes && rzpRes.success) {

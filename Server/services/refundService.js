@@ -27,23 +27,19 @@ const getRazorpayInstance = () => {
  * @param {boolean} [params.reverseSplit=true] - Whether to automatically reverse Route split from seller accounts
  * @returns {Promise<Object>}
  */
-export const processRazorpayRefund = async ({ order, amount, notes = {}, reverseSplit = true }) => {
+export const processRazorpayRefund = async ({ order, paymentId: passedPaymentId, amount, notes = {}, reverseSplit = true }) => {
   try {
-    if (!order) {
-      return { success: false, message: "Order object is required for refund processing." };
-    }
-
-    const orderId = order.orderId || order.id || String(order._id);
-    const refundAmt = Number(amount ?? order.refundDetails?.amount ?? order.totalAmount ?? order.total ?? 0);
+    const orderId = order?.orderId || order?.id || String(order?._id || notes.orderId || 'UNKNOWN');
+    const refundAmt = Number(amount ?? order?.refundDetails?.amount ?? order?.totalAmount ?? order?.total ?? 0);
 
     if (refundAmt <= 0) {
       return { success: false, message: `Invalid refund amount: ₹${refundAmt}` };
     }
 
-    // 1. Locate razorpayPaymentId from order or Payment collection
-    let paymentId = order.razorpayPaymentId || order.paymentDetails?.razorpayPaymentId;
+    // 1. Locate razorpayPaymentId from passed argument, order or Payment collection
+    let paymentId = passedPaymentId || order?.razorpayPaymentId || order?.paymentDetails?.razorpayPaymentId || order?.paymentDetails?.razorpay_payment_id;
 
-    if (!paymentId) {
+    if (!paymentId && order) {
       const paymentDoc = await Payment.findOne({
         $or: [
           { orderId: order._id },
