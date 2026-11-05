@@ -120,16 +120,41 @@ export const createShiprocketOrder = async (order, weightKg = 0.5, dimensions = 
     const isCod = rawMethod.includes("cod") || rawMethod.includes("cash");
     const paymentMethod = isCod ? "COD" : "Prepaid";
 
+    const shippingCharge = Number(order.shippingFee ?? order.shippingCost ?? order.deliveryCharge ?? 0);
+    const orderTotal = Number(order.totalAmount ?? order.total ?? 0);
+
     // Build order items array
+    // selling_price represents the final unit price of the item
     const orderItems = items.map((item) => ({
       name: String(item.name || "Product").slice(0, 100),
       sku: String(item.productId || item.id || item._id || "SKU001"),
       units: Number(item.quantity || 1),
-      selling_price: Number(item.finalPrice || item.price || 0),
-      discount: Number(item.offerDiscount || 0),
+      selling_price: Number(item.finalPrice !== undefined && item.finalPrice !== null ? item.finalPrice : (item.price || 0)),
+      discount: 0,
       tax: Number(item.gstPercent || item.gst || 0),
-      hsn: ""
+      hsn: String(item.hsnCode || item.hsn || "")
     }));
+
+    // Calculate actual items subtotal
+    const calculatedItemsSubtotal = orderItems.reduce(
+      (sum, it) => sum + (Number(it.selling_price || 0) * Number(it.units || 1)),
+      0
+    );
+
+    // In Shiprocket: Total Bill = sub_total + shipping_charges + giftwrap - total_discount
+    // sub_total MUST strictly be the items subtotal (excluding shipping charges),
+    // so Shiprocket does: sub_total + shipping_charges = orderTotal.
+    // If orderTotal was sent as sub_total, Shiprocket added shipping_charges TWICE!
+    let subTotal = calculatedItemsSubtotal;
+    if (orderTotal > 0) {
+      if (shippingCharge > 0 && Math.abs((calculatedItemsSubtotal + shippingCharge) - orderTotal) < 1) {
+        subTotal = calculatedItemsSubtotal;
+      } else if (orderTotal > shippingCharge) {
+        subTotal = Math.round((orderTotal - shippingCharge) * 100) / 100;
+      } else {
+        subTotal = orderTotal;
+      }
+    }
 
     const payload = {
       order_id: String(order.orderId || order.id),
@@ -159,11 +184,11 @@ export const createShiprocketOrder = async (order, weightKg = 0.5, dimensions = 
 
       // Payment
       payment_method: paymentMethod,
-      shipping_charges: Number(order.shippingFee || order.shippingCost || 0),
+      shipping_charges: shippingCharge,
       giftwrap_charges: 0,
       transaction_charges: 0,
-      total_discount: Number(order.discount || order.discountAmount || 0),
-      sub_total: Number(order.totalAmount || order.total || 0),
+      total_discount: 0,
+      sub_total: subTotal,
       length: Number(dimensions.length) || 15,
       breadth: Number(dimensions.width) || 12,
       height: Number(dimensions.height) || 5,
