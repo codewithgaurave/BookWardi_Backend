@@ -19,6 +19,27 @@ export const normalizePhone = (phone) => {
 import { upsertFcmToken, removeFcmTokenFromDoc } from "../utils/fcmHelper.js";
 export { upsertFcmToken, removeFcmTokenFromDoc };
 
+const findSellerForUser = async (user) => {
+  if (!user) return null;
+  const cleanPhone = user.phone ? String(user.phone).replace(/\D/g, "").slice(-10) : "";
+  const cleanEmail = user.email ? String(user.email).toLowerCase().trim() : "";
+  const isDummyEmail = cleanEmail.includes("@bookvardi.local");
+
+  const query = [];
+  if (cleanPhone) {
+    query.push({ phone: cleanPhone });
+    query.push({ phone: `+91${cleanPhone}` });
+    query.push({ phone: `+91 ${cleanPhone}` });
+    query.push({ phone: { $regex: cleanPhone + "$" } });
+  }
+  if (cleanEmail && !isDummyEmail) {
+    query.push({ email: cleanEmail });
+  }
+
+  if (query.length === 0) return null;
+  return await Seller.findOne({ $or: query });
+};
+
 const generateToken = (user) => {
   return jwt.sign(
     {
@@ -254,12 +275,7 @@ export const loginWithOtp = async (req, res) => {
       await user.save();
     }
 
-    const seller = await Seller.findOne({
-      $or: [
-        ...(user.phone ? [{ phone: user.phone }] : []),
-        ...(user.email ? [{ email: user.email }] : [])
-      ]
-    });
+    const seller = await findSellerForUser(user);
     const isSeller = Boolean(user.isSeller || (seller && seller.status === "approved"));
     const sellerStatus = seller ? seller.status : (user.sellerStatus || "none");
 
@@ -411,12 +427,7 @@ export const loginUser = async (req, res) => {
       await user.save();
     }
 
-    const seller = await Seller.findOne({
-      $or: [
-        ...(user.phone ? [{ phone: user.phone }] : []),
-        ...(user.email ? [{ email: user.email }] : [])
-      ]
-    });
+    const seller = await findSellerForUser(user);
     const isSeller = Boolean(user.isSeller || (seller && seller.status === "approved"));
     const sellerStatus = seller ? seller.status : (user.sellerStatus || "none");
 
@@ -475,12 +486,7 @@ export const getUserByPhone = async (req, res) => {
       return res.status(404).json({ message: "User not found" });
     }
 
-    const seller = await Seller.findOne({
-      $or: [
-        ...(user.phone ? [{ phone: user.phone }] : []),
-        ...(user.email ? [{ email: user.email }] : [])
-      ]
-    });
+    const seller = await findSellerForUser(user);
     const isSeller = Boolean(user.isSeller || (seller && seller.status === "approved"));
     const sellerStatus = seller ? seller.status : (user.sellerStatus || "none");
 
@@ -560,12 +566,7 @@ export const getUserProfile = async (req, res) => {
       });
     }
 
-    const seller = await Seller.findOne({
-      $or: [
-        ...(user.phone ? [{ phone: user.phone }] : []),
-        ...(user.email ? [{ email: user.email }] : [])
-      ]
-    });
+    const seller = await findSellerForUser(user);
     const isSeller = Boolean(user.isSeller || (seller && seller.status === "approved"));
     const sellerStatus = seller ? seller.status : (user.sellerStatus || "none");
 

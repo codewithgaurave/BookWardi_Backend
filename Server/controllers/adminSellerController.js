@@ -35,8 +35,17 @@ export const getAllSellers = async (req, res) => {
     const { status, search } = req.query;
     const filter = {};
 
-    if (status && ["pending", "approved", "rejected", "suspended"].includes(status)) {
-      filter.status = status;
+    if (status) {
+      const s = String(status).toLowerCase().trim();
+      if (s === "pending" || s === "pending approval") {
+        filter.status = { $in: ["pending", "Pending Approval", "Pending", "pending_approval", "in_review"] };
+      } else if (s === "approved" || s === "verified") {
+        filter.status = { $in: ["approved", "Approved", "verified", "Verified"] };
+      } else if (s === "rejected") {
+        filter.status = { $in: ["rejected", "Rejected"] };
+      } else if (s === "suspended") {
+        filter.status = { $in: ["suspended", "Suspended"] };
+      }
     }
 
     if (search) {
@@ -62,10 +71,10 @@ export const getAllSellers = async (req, res) => {
     const [sellers, total, pending, approved, rejected, suspended, updatesPending] = await Promise.all([
       sellersPromise,
       Seller.countDocuments(),
-      Seller.countDocuments({ status: "pending" }),
-      Seller.countDocuments({ status: "approved" }),
-      Seller.countDocuments({ status: "rejected" }),
-      Seller.countDocuments({ status: "suspended" }),
+      Seller.countDocuments({ status: { $in: ["pending", "Pending Approval", "Pending", "pending_approval", "in_review"] } }),
+      Seller.countDocuments({ status: { $in: ["approved", "Approved", "verified", "Verified"] } }),
+      Seller.countDocuments({ status: { $in: ["rejected", "Rejected"] } }),
+      Seller.countDocuments({ status: { $in: ["suspended", "Suspended"] } }),
       Seller.countDocuments({ pendingUpdates: { $ne: null } })
     ]);
 
