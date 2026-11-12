@@ -1171,7 +1171,8 @@ export const getPublicPlatformSettings = async (req, res) => {
       defaultCommissionRate: commRate,
       commissionRate: commRate,
       companyName: settings.companyName || "BOOK VARDI",
-      companyAddress: settings.companyAddress || "Lucknow, Uttar Pradesh - 226001",
+      companyAddress: settings.companyAddress || "Shakhumbhari Road, Town Behat, Dist. Saharanpur (U.P.) - 247121",
+      headOfficeAddress: settings.headOfficeAddress || settings.companyAddress || "Shakhumbhari Road, Town Behat, Dist. Saharanpur (U.P.) - 247121",
       companyGstin: settings.companyGstin || "09AAACB1234F1Z9",
       supportEmail: settings.supportEmail || settings.customerCareEmail || "support@bookvardi.in",
       sellerSupportEmail: settings.sellerSupportEmail || settings.supportEmail || "sellers@bookvardi.in",
@@ -1191,6 +1192,8 @@ export const getPublicPlatformSettings = async (req, res) => {
       commissionRate: 5,
       customerCarePhone: "+91 98765 43210",
       customerCareEmail: "support@bookvardi.in",
+      companyAddress: "Shakhumbhari Road, Town Behat, Dist. Saharanpur (U.P.) - 247121",
+      headOfficeAddress: "Shakhumbhari Road, Town Behat, Dist. Saharanpur (U.P.) - 247121",
       supportPhone: "+91 98765 43210",
       supportEmail: "support@bookvardi.in",
       sellerSupportEmail: "sellers@bookvardi.in"
@@ -1268,7 +1271,9 @@ export const updatePlatformSettings = async (req, res) => {
           customerCareEmail: settings.customerCareEmail || settings.supportEmail,
           supportPhone: settings.supportPhone || settings.customerCarePhone,
           supportEmail: settings.supportEmail || settings.customerCareEmail,
-          supportHours: settings.supportHours
+          supportHours: settings.supportHours,
+          companyAddress: settings.companyAddress,
+          headOfficeAddress: settings.headOfficeAddress || settings.companyAddress
         },
         timestamp: new Date().toISOString()
       });
