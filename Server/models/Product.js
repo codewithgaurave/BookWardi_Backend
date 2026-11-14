@@ -127,6 +127,16 @@ const productSchema = new mongoose.Schema(
       trim: true,
       default: "" // e.g. "SchoolKart", "Sharma Uniforms"
     },
+    hsn: {
+      type: String,
+      trim: true,
+      default: "6203" // e.g. 6203 (Uniforms), 4901 (Books), 4820 (Stationery), 6403 (Shoes), 4202 (Bags)
+    },
+    hsnCode: {
+      type: String,
+      trim: true,
+      default: "6203"
+    },
     gst: {
       type: Number, // e.g. 0, 5, 12, 18, 28
       default: 5

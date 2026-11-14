@@ -31,7 +31,7 @@ import {
   sendOrderStatusSms
 } from "../services/smsService.js";
 import { saveBase64ToFile } from "./sellerAuthController.js";
-import { getSellerInvoicePrefix, formatSellerInvoiceNumber, formatSellerCreditNoteNumber, getSellerCreditNoteNumber } from "../utils/invoiceHelper.js";
+import { getSellerInvoicePrefix, formatSellerInvoiceNumber, formatSellerCreditNoteNumber, getSellerCreditNoteNumber, resolveHsnCode } from "../utils/invoiceHelper.js";
 
 // Global in-memory cache for ultra-fast order retrieval
 let adminOrdersCache = null;
@@ -1625,6 +1625,10 @@ export const createOrder = async (req, res) => {
       item.gstPercentage = resolvedGst;
       item.gstRate = resolvedGst;
       item.isGstInclusive = prod?.isGstInclusive !== undefined ? prod.isGstInclusive : (item.isGstInclusive !== undefined ? item.isGstInclusive : true);
+      const explicitHsn = prod?.hsn || prod?.hsnCode || item.hsn || item.hsnCode || "";
+      const resolvedHsn = resolveHsnCode(explicitHsn, item.category || prod?.category, item.subCategory || prod?.subCategory, item.name || prod?.name);
+      item.hsn = resolvedHsn;
+      item.hsnCode = resolvedHsn;
     }
 
     const orderIdVal = (orderId && !/^[0-9a-fA-F]{24}$/.test(orderId))
@@ -2385,6 +2389,8 @@ export const trackOrder = async (req, res) => {
           offerDiscount: itemOfferDiscount,
           discount: itemOfferDiscount,
           total: Number(item.total) || Math.round((finalItemPrice * (Number(item.quantity) || 1)) * 100) / 100,
+          hsn: item.hsnCode || item.hsn || resolveHsnCode("", item.category, item.subCategory, item.name),
+          hsnCode: item.hsnCode || item.hsn || resolveHsnCode("", item.category, item.subCategory, item.name),
           gstPercent: item.gstPercent !== undefined ? item.gstPercent : (item.gstRate ?? item.gst ?? 5),
           gstRate: item.gstRate !== undefined ? item.gstRate : (item.gstPercent ?? item.gst ?? 5),
           isGstInclusive: item.isGstInclusive !== false,

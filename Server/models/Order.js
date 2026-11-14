@@ -23,6 +23,8 @@ const orderItemSchema = new mongoose.Schema({
     address: { type: String, default: "" },
     city: { type: String, default: "" }
   },
+  hsn: { type: String, trim: true, default: "" },
+  hsnCode: { type: String, trim: true, default: "" },
   gst: { type: Number, default: 5 },
   gstPercent: { type: Number, default: 5 },
   gstPercentage: { type: Number, default: 5 },

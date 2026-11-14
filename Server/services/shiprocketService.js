@@ -1,4 +1,5 @@
 import axios from "axios";
+import { resolveHsnCode } from "../utils/invoiceHelper.js";
 
 const SHIPROCKET_BASE_URL = "https://apiv2.shiprocket.in/v1/external";
 
@@ -132,7 +133,7 @@ export const createShiprocketOrder = async (order, weightKg = 0.5, dimensions = 
       selling_price: Number(item.finalPrice !== undefined && item.finalPrice !== null ? item.finalPrice : (item.price || 0)),
       discount: 0,
       tax: Number(item.gstPercent || item.gst || 0),
-      hsn: String(item.hsnCode || item.hsn || "")
+      hsn: String(resolveHsnCode(item.hsnCode || item.hsn, item.category, item.subCategory, item.name))
     }));
 
     // Calculate actual items subtotal

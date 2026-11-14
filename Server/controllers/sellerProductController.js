@@ -5,6 +5,7 @@ import Seller from "../models/Seller.js";
 import User from "../models/User.js";
 import { clearCache } from "../utils/cache.js";
 import { saveBase64ToFile } from "./sellerAuthController.js";
+import { resolveHsnCode } from "../utils/invoiceHelper.js";
 
 // Helper function to safely parse array inputs from JSON or multipart form-data
 const parseArray = (input) => {
@@ -468,6 +469,8 @@ export const createProduct = async (req, res) => {
       colors: parseArray(colors),
       material: material || "",
       brand: brand || "",
+      hsn: resolveHsnCode(req.body.hsn || req.body.hsnCode, category, subCategory, name),
+      hsnCode: resolveHsnCode(req.body.hsn || req.body.hsnCode, category, subCategory, name),
       gst: parsedGst,
       gstPercentage: parsedGst,
       gstPercent: parsedGst,
@@ -603,6 +606,16 @@ export const updateProduct = async (req, res) => {
 
     if (updates.isGstInclusive !== undefined) {
       updates.isGstInclusive = parseBool(updates.isGstInclusive, true);
+    }
+
+    if (updates.hsn !== undefined || updates.hsnCode !== undefined || updates.category !== undefined) {
+      const targetHsn = updates.hsn !== undefined ? updates.hsn : (updates.hsnCode !== undefined ? updates.hsnCode : product.hsn);
+      const targetCat = updates.category !== undefined ? updates.category : product.category;
+      const targetSub = updates.subCategory !== undefined ? updates.subCategory : product.subCategory;
+      const targetName = updates.name !== undefined ? updates.name : product.name;
+      const resolvedHsn = resolveHsnCode(targetHsn, targetCat, targetSub, targetName);
+      updates.hsn = resolvedHsn;
+      updates.hsnCode = resolvedHsn;
     }
 
     // Parse sizeVariants / variants safely

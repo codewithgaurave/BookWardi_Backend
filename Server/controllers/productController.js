@@ -3,6 +3,7 @@ import Product from "../models/Product.js";
 import Seller from "../models/Seller.js";
 import { clearCache } from "../utils/cache.js";
 import { saveBase64ToFile } from "./sellerAuthController.js";
+import { resolveHsnCode } from "../utils/invoiceHelper.js";
 
 // Helper function to safely parse array inputs
 const parseArray = (input) => {
@@ -551,6 +552,9 @@ export const createProduct = async (req, res) => {
       payload.gstPercentage = parsedGstVal;
       payload.gstRate = parsedGstVal;
     }
+    const resolvedHsn = resolveHsnCode(payload.hsn || payload.hsnCode, payload.category, payload.subCategory, payload.name);
+    payload.hsn = resolvedHsn;
+    payload.hsnCode = resolvedHsn;
     payload.isGstInclusive = parseBool(payload.isGstInclusive, true);
     if (payload.isReturnable !== undefined) payload.isReturnable = parseBool(payload.isReturnable, true);
     if (payload.isExchangeable !== undefined) payload.isExchangeable = parseBool(payload.isExchangeable, true);
@@ -700,6 +704,15 @@ export const updateProduct = async (req, res) => {
     }
     if (updates.isGstInclusive !== undefined) {
       updates.isGstInclusive = parseBool(updates.isGstInclusive, true);
+    }
+    if (updates.hsn !== undefined || updates.hsnCode !== undefined || updates.category !== undefined) {
+      const targetHsn = updates.hsn !== undefined ? updates.hsn : (updates.hsnCode !== undefined ? updates.hsnCode : product.hsn);
+      const targetCat = updates.category !== undefined ? updates.category : product.category;
+      const targetSub = updates.subCategory !== undefined ? updates.subCategory : product.subCategory;
+      const targetName = updates.name !== undefined ? updates.name : product.name;
+      const resolvedHsn = resolveHsnCode(targetHsn, targetCat, targetSub, targetName);
+      updates.hsn = resolvedHsn;
+      updates.hsnCode = resolvedHsn;
     }
     if (updates.isReturnable !== undefined) updates.isReturnable = parseBool(updates.isReturnable, true);
     if (updates.isExchangeable !== undefined) updates.isExchangeable = parseBool(updates.isExchangeable, true);

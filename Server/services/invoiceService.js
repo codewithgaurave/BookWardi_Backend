@@ -3,7 +3,7 @@ import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 import { isGstExempted } from "./settlementService.js";
-import { getSellerInvoicePrefix, formatSellerInvoiceNumber, formatSellerCreditNoteNumber, getSellerCreditNoteNumber, getSellerExchangeInvoiceNumber } from "../utils/invoiceHelper.js";
+import { getSellerInvoicePrefix, formatSellerInvoiceNumber, formatSellerCreditNoteNumber, getSellerCreditNoteNumber, getSellerExchangeInvoiceNumber, resolveHsnCode } from "../utils/invoiceHelper.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -934,7 +934,9 @@ export const generateTaxInvoicePDF = (order, filterSellerId = null, options = {}
     const itemCgst = Math.round((itemTax - itemSgst) * 100) / 100;
 
     const itemSeller = getItemSellerName(item);
+    const itemHsn = item.hsnCode || item.hsn || item.productId?.hsnCode || item.productId?.hsn || resolveHsnCode("", item.category || item.productId?.category, item.subCategory || item.productId?.subCategory, item.name || item.productId?.name);
     const variantStr = [
+      `HSN: ${itemHsn}`,
       item.size ? `Size: ${item.size}` : "",
       item.category || item.productId?.category || ""
     ].filter(Boolean).join(" • ");

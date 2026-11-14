@@ -264,3 +264,56 @@ export const getSellerExchangeInvoiceNumber = (order, seller = null, allOrders =
 
   return null;
 };
+
+/**
+ * Resolves standard GST HSN/SAC code based on explicit product HSN or category/name heuristics.
+ * Common educational & school supply HSN codes:
+ * 6203 - School uniform trousers, shirts, blazers, skirts (Woven apparel)
+ * 6109 - T-shirts / Polo uniforms (Knitted apparel)
+ * 6110 - Sweaters, cardigans, winter uniform knitwear
+ * 6505 - Caps, beanies, winter woolen caps, hats
+ * 4901 - Textbooks, printed educational books (0% GST)
+ * 4820 - Exercise books, notebooks, registers, paper stationery
+ * 6403 - School shoes, sports shoes, footwear
+ * 4202 - School bags, backpacks
+ * 6115 - Socks, stockings
+ * 6217 - School ties, belts
+ */
+export const resolveHsnCode = (explicitHsn, category = '', subCategory = '', name = '') => {
+  if (explicitHsn !== undefined && explicitHsn !== null && String(explicitHsn).trim() !== '') {
+    const clean = String(explicitHsn).trim();
+    if (clean && clean !== 'N/A' && clean !== '-' && clean !== 'undefined' && clean !== 'null') {
+      return clean;
+    }
+  }
+  const text = `${category} ${subCategory} ${name}`.toLowerCase();
+  if (text.includes('textbook') || text.includes('printed book') || text.includes('pustak') || (text.includes('book') && !text.includes('notebook') && !text.includes('scrapbook'))) {
+    return '4901';
+  }
+  if (text.includes('notebook') || text.includes('copy') || text.includes('register') || text.includes('stationery') || text.includes('pen') || text.includes('pencil') || text.includes('diary') || text.includes('scrapbook')) {
+    return '4820';
+  }
+  if (text.includes('shoe') || text.includes('footwear') || text.includes('boot') || text.includes('sandal') || text.includes('juta')) {
+    return '6403';
+  }
+  if (text.includes('bag') || text.includes('backpack') || text.includes('basta')) {
+    return '4202';
+  }
+  if (text.includes('cap') || text.includes('woolen cap') || text.includes('hat') || text.includes('topi')) {
+    return '6505';
+  }
+  if (text.includes('sweater') || text.includes('cardigan') || text.includes('pullover') || text.includes('hoodie')) {
+    return '6110';
+  }
+  if (text.includes('t-shirt') || text.includes('tshirt') || text.includes('polo')) {
+    return '6109';
+  }
+  if (text.includes('sock') || text.includes('moze')) {
+    return '6115';
+  }
+  if (text.includes('tie') || text.includes('belt')) {
+    return '6217';
+  }
+  return '6203'; // Default School Uniform / Apparel
+};
+
