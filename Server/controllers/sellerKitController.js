@@ -164,7 +164,7 @@ export const getSellerKits = async (req, res) => {
     };
 
     const kits = await Kit.find(filter)
-      .populate("items.productId", "name price images image category stock")
+      .populate("items.productId", "name price images image category stock sizes sizeVariants")
       .sort({ createdAt: -1 })
       .lean();
     res.json(kits);
@@ -302,6 +302,8 @@ export const createKit = async (req, res) => {
         totalPrice: unitPrice * quantity,
         originalPrice: Number(item.originalPrice || item.mrp) || unitPrice,
         size: item.size || "",
+        availableSizes: Array.isArray(item.availableSizes) ? item.availableSizes : (typeof item.availableSizes === "string" ? item.availableSizes.split(",").map(s => s.trim()).filter(Boolean) : []),
+        sizeVariants: Array.isArray(item.sizeVariants) ? item.sizeVariants : [],
         color: item.color || "",
         image: item.image || ""
       };
@@ -457,6 +459,8 @@ export const updateKit = async (req, res) => {
             totalPrice: unitPrice * quantity,
             originalPrice: Number(item.originalPrice || item.mrp) || unitPrice,
             size: item.size || "",
+            availableSizes: Array.isArray(item.availableSizes) ? item.availableSizes : (typeof item.availableSizes === "string" ? item.availableSizes.split(",").map(s => s.trim()).filter(Boolean) : []),
+            sizeVariants: Array.isArray(item.sizeVariants) ? item.sizeVariants : [],
             color: item.color || "",
             image: item.image || ""
           };

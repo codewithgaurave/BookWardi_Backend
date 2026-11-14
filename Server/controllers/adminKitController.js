@@ -40,7 +40,7 @@ export const getAdminKits = async (req, res) => {
 
     const kits = await Kit.find(filter)
       .populate("sellerId", "name storeName email phone businessName city")
-      .populate("items.productId", "name price images image category stock")
+      .populate("items.productId", "name price images image category stock sizes sizeVariants")
       .sort({ createdAt: -1 });
 
     res.json({
@@ -59,7 +59,7 @@ export const getAdminKitById = async (req, res) => {
   try {
     const kit = await Kit.findOne({ _id: req.params.id, isDeleted: { $ne: true } })
       .populate("sellerId", "name storeName email phone businessName city")
-      .populate("items.productId", "name price images image category stock");
+      .populate("items.productId", "name price images image category stock sizes sizeVariants");
 
     if (!kit) {
       return res.status(404).json({ success: false, message: "Kit bundle not found" });
@@ -183,6 +183,8 @@ export const createAdminKit = async (req, res) => {
         totalPrice: unitPrice * quantity,
         originalPrice: Number(item.originalPrice || item.mrp) || unitPrice,
         size: item.size || "",
+        availableSizes: Array.isArray(item.availableSizes) ? item.availableSizes : (typeof item.availableSizes === "string" ? item.availableSizes.split(",").map(s => s.trim()).filter(Boolean) : []),
+        sizeVariants: Array.isArray(item.sizeVariants) ? item.sizeVariants : [],
         color: item.color || "",
         image: item.image || ""
       };
@@ -295,6 +297,8 @@ export const updateAdminKit = async (req, res) => {
             totalPrice: unitPrice * quantity,
             originalPrice: Number(item.originalPrice || item.mrp) || unitPrice,
             size: item.size || "",
+            availableSizes: Array.isArray(item.availableSizes) ? item.availableSizes : (typeof item.availableSizes === "string" ? item.availableSizes.split(",").map(s => s.trim()).filter(Boolean) : []),
+            sizeVariants: Array.isArray(item.sizeVariants) ? item.sizeVariants : [],
             color: item.color || "",
             image: item.image || ""
           };

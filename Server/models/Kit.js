@@ -37,6 +37,14 @@ const kitItemSchema = new mongoose.Schema({
     type: String,
     default: ""
   },
+  availableSizes: {
+    type: [String],
+    default: []
+  },
+  sizeVariants: {
+    type: [mongoose.Schema.Types.Mixed],
+    default: []
+  },
   color: {
     type: String,
     default: ""
@@ -113,6 +121,18 @@ const kitSchema = new mongoose.Schema(
       type: String,
       trim: true,
       default: "School Approved"
+    },
+    sizes: {
+      type: [String],
+      default: []
+    },
+    availableSizes: {
+      type: [String],
+      default: []
+    },
+    sizeVariants: {
+      type: [mongoose.Schema.Types.Mixed],
+      default: []
     },
     items: {
       type: [kitItemSchema],
