@@ -103,9 +103,14 @@ const enrichKitSizes = (kitObj) => {
       }
 
       sizes.forEach((s) => allSizesSet.add(String(s).trim()));
+      const variants = (Array.isArray(it.sizeVariants) && it.sizeVariants.length > 0)
+        ? it.sizeVariants
+        : (it.productId && Array.isArray(it.productId.sizeVariants) ? it.productId.sizeVariants : []);
+
       return {
         ...it,
-        availableSizes: sizes
+        availableSizes: sizes,
+        sizeVariants: variants
       };
     });
   }

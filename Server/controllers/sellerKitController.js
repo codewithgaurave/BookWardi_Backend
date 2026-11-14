@@ -188,7 +188,7 @@ export const getSellerKitById = async (req, res) => {
       isDeleted: { $ne: true },
       status: { $nin: ["deleted"] },
       sellerId: { $in: validObjectIds }
-    }).populate("items.productId", "name price images image category stock").lean();
+    }).populate("items.productId", "name price images image category stock sizes sizeVariants").lean();
 
     if (!kit) {
       return res.status(404).json({ message: "Kit bundle not found or unauthorized" });
