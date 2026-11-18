@@ -170,10 +170,14 @@ export const registerSeller = async (req, res) => {
       sampleProductTitle: req.body.sampleProductTitle || ""
     };
 
+    const isAcceptedTerms = req.body.acceptedTerms === true || req.body.acceptedTerms === "true";
+    const isAcceptedCommission = req.body.acceptedCommissionRate === true || req.body.acceptedCommissionRate === "true";
+    const isAcceptedReturn = req.body.acceptedReturnPolicy === true || req.body.acceptedReturnPolicy === "true" || isAcceptedTerms;
+
     const agreementsObj = {
-      acceptedTerms: req.body.acceptedTerms === true || req.body.acceptedTerms === "true",
-      acceptedCommissionRate: req.body.acceptedCommissionRate === true || req.body.acceptedCommissionRate === "true",
-      acceptedReturnPolicy: req.body.acceptedReturnPolicy === true || req.body.acceptedReturnPolicy === "true",
+      acceptedTerms: isAcceptedTerms,
+      acceptedCommissionRate: isAcceptedCommission,
+      acceptedReturnPolicy: isAcceptedReturn,
       authorizedSignatoryConfirmation: req.body.authorizedSignatoryConfirmation === true || req.body.authorizedSignatoryConfirmation === "true"
     };
 
@@ -184,7 +188,7 @@ export const registerSeller = async (req, res) => {
       });
     }
 
-    if (!agreementsObj.acceptedTerms || !agreementsObj.acceptedCommissionRate || !agreementsObj.acceptedReturnPolicy) {
+    if (!agreementsObj.acceptedTerms || !agreementsObj.acceptedCommissionRate) {
       return res.status(400).json({
         success: false,
         message: "All mandatory merchant agreements (Terms of Service, Commission Schedule, and Student Exchange Assurance) must be accepted before submitting."
