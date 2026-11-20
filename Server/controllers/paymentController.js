@@ -235,11 +235,42 @@ export const verifyPayment = async (req, res) => {
         ...(razorpay_order_id ? [{ razorpayOrderId: razorpay_order_id }] : [])
       ];
 
+      let paymentInstrument = "ONLINE";
+      let paymentMethodName = "Online";
+      if (rzpPayment) {
+        if (rzpPayment.method === "card") {
+          const isCredit = String(rzpPayment.card?.type || "").toLowerCase() === "credit";
+          paymentInstrument = isCredit ? "CREDIT_CARD" : "DEBIT_CARD";
+          paymentMethodName = isCredit ? "Credit Card" : "Debit Card";
+        } else if (rzpPayment.method === "upi") {
+          paymentInstrument = "UPI";
+          paymentMethodName = "UPI";
+        } else if (rzpPayment.method === "netbanking") {
+          paymentInstrument = "NETBANKING";
+          paymentMethodName = "Net Banking";
+        } else if (rzpPayment.method === "wallet") {
+          paymentInstrument = "WALLET";
+          paymentMethodName = "Wallet";
+        }
+      }
+
       await Order.updateMany(
         { $or: orderQuery },
         {
           $set: {
             paymentStatus: "paid",
+            paymentInstrument,
+            paymentMethod: paymentMethodName,
+            paymentDetails: {
+              method: rzpPayment?.method || "online",
+              instrument: paymentInstrument,
+              cardType: rzpPayment?.card?.type || null,
+              cardNetwork: rzpPayment?.card?.network || null,
+              cardLast4: rzpPayment?.card?.last4 || null,
+              bank: rzpPayment?.bank || null,
+              wallet: rzpPayment?.wallet || null,
+              vpa: rzpPayment?.vpa || null
+            },
             overallStatus: "Pending",
             status: "Pending",
             "items.$[].status": "pending",

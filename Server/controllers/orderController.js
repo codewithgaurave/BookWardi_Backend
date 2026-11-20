@@ -4105,14 +4105,20 @@ export const requestReturnExchange = async (req, res) => {
       });
     }
 
+    const isCreditCardOrder = Boolean(
+      String(order.paymentInstrument || "").toUpperCase() === "CREDIT_CARD" ||
+      String(order.paymentMethod || "").toLowerCase().includes("credit") ||
+      String(order.paymentDetails?.cardType || "").toLowerCase() === "credit"
+    );
+
     const formattedRefundDetails = refundDetails ? {
-      method: refundDetails.method || (refundDetails.upiId ? "UPI" : (refundDetails.accountNumber ? "BANK" : "ORIGINAL_SOURCE")),
+      method: refundDetails.method || (refundDetails.upiId ? "UPI" : (refundDetails.accountNumber ? "BANK" : (isCreditCardOrder ? "CREDIT_CARD" : "ORIGINAL_SOURCE"))),
       upiId: refundDetails.upiId || "",
       bankName: refundDetails.bankName || "",
       accountNumber: refundDetails.accountNumber || "",
       ifscCode: refundDetails.ifscCode || "",
       accountHolderName: refundDetails.accountHolderName || ""
-    } : { method: "ORIGINAL_SOURCE", upiId: "", bankName: "", accountNumber: "", ifscCode: "", accountHolderName: "" };
+    } : { method: (isCreditCardOrder ? "CREDIT_CARD" : "ORIGINAL_SOURCE"), upiId: "", bankName: "", accountNumber: "", ifscCode: "", accountHolderName: "" };
 
     const newOverallStatus = type === "exchange" ? "exchange_requested" : "return_requested";
     order.overallStatus = newOverallStatus;
@@ -4484,47 +4490,123 @@ export const updateReturnExchangeStatus = async (req, res) => {
         order.stockRestored = true;
       }
 
-      // ─── Automated Direct Razorpay Auto-Refund on Product Received ─────────────
+      // ─── Automated or Customer-Account Refund on Product Received ─────────────
       if (type === "return" || order.returnRequest?.priceAdjustmentType === "partial_refund") {
         const refundAmt = Number(order.returnRequest?.refundAmount || order.refundDetails?.amount || order.totalAmount || 0);
         const alreadyRefunded = order.paymentStatus === "refunded" || Boolean(order.refundDetails?.refundTxnId && !String(order.refundDetails.refundTxnId).startsWith("TEMP"));
 
         if (refundAmt > 0 && !alreadyRefunded) {
-          try {
-            console.log(`💳 [AUTO REFUND] Triggering automated Razorpay refund for Order ${order.orderId}...`);
-            const rzpRefundRes = await processRazorpayRefund({
-              order,
-              amount: refundAmt,
-              notes: {
-                orderId: order.orderId,
-                action: "product_received_auto_refund"
-              },
-              reverseSplit: true
-            });
+          const customerRefundMethod = String(
+            order.refundDetails?.method ||
+            order.returnRequest?.refundDetails?.method ||
+            ""
+          ).toUpperCase();
 
-            if (rzpRefundRes?.success) {
-              const assignedTxnId = rzpRefundRes.refundId || `RFND-${Date.now()}`;
-              order.paymentStatus = "refunded";
-              order.refundStatus = "Refund Completed";
-              order.refundTxnId = assignedTxnId;
-              order.returnRequest.refundTxnId = assignedTxnId;
-              order.refundDetails = {
-                ...(order.refundDetails || {}),
-                refundTxnId: assignedTxnId,
+          const upiVal = order.refundDetails?.upiId || order.returnRequest?.refundDetails?.upiId;
+          const acctVal = order.refundDetails?.accountNumber || order.returnRequest?.refundDetails?.accountNumber;
+          const bankVal = order.refundDetails?.bankName || order.returnRequest?.refundDetails?.bankName || "Bank";
+
+          const isCustomerAccountProvided =
+            customerRefundMethod === "UPI" ||
+            customerRefundMethod === "BANK" ||
+            Boolean(upiVal) ||
+            Boolean(acctVal);
+
+          const isCreditCardPayment =
+            customerRefundMethod === "CREDIT_CARD" ||
+            (!isCustomerAccountProvided && (
+              String(order.paymentInstrument || "").toUpperCase() === "CREDIT_CARD" ||
+              String(order.paymentMethod || "").toLowerCase().includes("credit") ||
+              String(order.paymentDetails?.cardType || "").toLowerCase() === "credit"
+            ));
+
+          if (isCustomerAccountProvided) {
+            // Customer provided their own UPI ID or Bank Account: record payout to customer's account (do NOT reverse to original card/payment source)
+            const assignedTxnId = upiVal ? `UPI-REF-${Date.now()}` : `BANK-REF-${Date.now()}`;
+            order.paymentStatus = "refunded";
+            order.refundStatus = "Refund Initiated (To Customer Account)";
+            order.refundTxnId = assignedTxnId;
+            if (order.returnRequest) order.returnRequest.refundTxnId = assignedTxnId;
+            const destDesc = upiVal ? `Customer UPI: ${upiVal}` : `Customer Bank: ${bankVal} (A/C: ${acctVal})`;
+            order.refundDetails = {
+              ...(order.refundDetails || {}),
+              refundTxnId: assignedTxnId,
+              amount: refundAmt,
+              status: "Completed",
+              refundMethod: upiVal ? `Customer UPI Transfer (${upiVal})` : `Customer Bank Transfer (${bankVal})`,
+              refundedAt: new Date()
+            };
+            canonicalReturnStatus = "refund_completed";
+            overallStatus = "refund_completed";
+            title = "Refund Processed to Customer Account";
+            description = `₹${refundAmt} refund recorded to ${destDesc}. Ref: ${assignedTxnId}.`;
+          } else if (isCreditCardPayment) {
+            // Paid via Credit Card: automatically refund back to the Credit Card per banking compliance
+            try {
+              console.log(`💳 [CREDIT CARD REFUND] Triggering automated Razorpay refund for Order ${order.orderId}...`);
+              const rzpRefundRes = await processRazorpayRefund({
+                order,
                 amount: refundAmt,
-                status: "Completed",
-                refundMethod: rzpRefundRes.simulated ? "Simulated Online Refund" : "Razorpay Auto-Refund (Route Split Reversal)",
-                refundedAt: new Date()
-              };
-              canonicalReturnStatus = "refund_completed";
-              overallStatus = "refund_completed";
-              title = "Refund Processed & Completed via Razorpay";
-              description = `₹${refundAmt} refunded directly to customer via Razorpay (TXN: ${assignedTxnId}). Seller Route split reversed.`;
-            } else if (rzpRefundRes?.isCodOrManual) {
-              description += ` • Offline COD order: please process manual UPI/Cash refund.`;
+                notes: {
+                  orderId: order.orderId,
+                  action: "product_received_credit_card_refund"
+                },
+                reverseSplit: true
+              });
+
+              if (rzpRefundRes?.success) {
+                const assignedTxnId = rzpRefundRes.refundId || `RFND-${Date.now()}`;
+                order.paymentStatus = "refunded";
+                order.refundStatus = "Refund Completed";
+                order.refundTxnId = assignedTxnId;
+                order.returnRequest.refundTxnId = assignedTxnId;
+                order.refundDetails = {
+                  ...(order.refundDetails || {}),
+                  refundTxnId: assignedTxnId,
+                  amount: refundAmt,
+                  status: "Completed",
+                  refundMethod: "Credit Card Auto-Refund (Razorpay)",
+                  refundedAt: new Date()
+                };
+                canonicalReturnStatus = "refund_completed";
+                overallStatus = "refund_completed";
+                title = "Refund Credited to Credit Card";
+                description = `₹${refundAmt} refunded directly to customer's Credit Card via Razorpay (TXN: ${assignedTxnId}).`;
+              }
+            } catch (refundErr) {
+              console.warn("⚠️ Credit Card Razorpay refund error:", refundErr.message);
             }
-          } catch (refundErr) {
-            console.warn("⚠️ Automated Razorpay refund note on product_received:", refundErr.message);
+          } else {
+            // General online fallback
+            try {
+              const rzpRefundRes = await processRazorpayRefund({
+                order,
+                amount: refundAmt,
+                notes: { orderId: order.orderId, action: "product_received_auto_refund" },
+                reverseSplit: true
+              });
+              if (rzpRefundRes?.success) {
+                const assignedTxnId = rzpRefundRes.refundId || `RFND-${Date.now()}`;
+                order.paymentStatus = "refunded";
+                order.refundStatus = "Refund Completed";
+                order.refundTxnId = assignedTxnId;
+                order.returnRequest.refundTxnId = assignedTxnId;
+                order.refundDetails = {
+                  ...(order.refundDetails || {}),
+                  refundTxnId: assignedTxnId,
+                  amount: refundAmt,
+                  status: "Completed",
+                  refundMethod: "Razorpay Auto-Refund",
+                  refundedAt: new Date()
+                };
+                canonicalReturnStatus = "refund_completed";
+                overallStatus = "refund_completed";
+                title = "Refund Processed via Razorpay";
+                description = `₹${refundAmt} refunded directly to customer via Razorpay (TXN: ${assignedTxnId}).`;
+              }
+            } catch (refundErr) {
+              console.warn("⚠️ Automated Razorpay refund warning:", refundErr.message);
+            }
           }
         }
       }
@@ -4543,35 +4625,104 @@ export const updateReturnExchangeStatus = async (req, res) => {
       let finalRefundTxnId = refundTxnId;
       const refundAmt = Number(order.refundDetails?.amount || order.returnRequest?.refundAmount || order.totalAmount || 0);
 
-      // If online order and not yet processed, trigger Razorpay auto-refund
-      const isManualRef = finalRefundTxnId && (finalRefundTxnId.startsWith("UPI-REF") || finalRefundTxnId.startsWith("REF-"));
-      if ((!finalRefundTxnId || isManualRef) && order.paymentStatus !== "refunded" && refundAmt > 0) {
-        try {
-          const rzpRefundRes = await processRazorpayRefund({
-            order,
-            amount: refundAmt,
-            notes: { orderId: order.orderId, action: "refund_completed" },
-            reverseSplit: true
-          });
-          if (rzpRefundRes?.success && rzpRefundRes.refundId) {
-            finalRefundTxnId = rzpRefundRes.refundId;
-          }
-        } catch (rzpErr) {
-          console.warn("Automated Razorpay refund warning:", rzpErr.message);
-        }
-      }
+      const customerRefundMethod = String(
+        order.refundDetails?.method ||
+        order.returnRequest?.refundDetails?.method ||
+        ""
+      ).toUpperCase();
 
-      finalRefundTxnId = finalRefundTxnId || `RFND-${Date.now()}`;
-      order.refundTxnId = finalRefundTxnId;
-      order.returnRequest.refundTxnId = finalRefundTxnId;
-      order.refundDetails = {
-        ...(order.refundDetails || {}),
-        refundTxnId: finalRefundTxnId,
-        amount: refundAmt,
-        status: "Completed",
-        refundMethod: "Razorpay Auto-Refund (Route Split Reversal)",
-        refundedAt: new Date()
-      };
+      const upiVal = order.refundDetails?.upiId || order.returnRequest?.refundDetails?.upiId;
+      const acctVal = order.refundDetails?.accountNumber || order.returnRequest?.refundDetails?.accountNumber;
+      const bankVal = order.refundDetails?.bankName || order.returnRequest?.refundDetails?.bankName || "Bank";
+
+      const isCustomerAccountProvided =
+        customerRefundMethod === "UPI" ||
+        customerRefundMethod === "BANK" ||
+        Boolean(upiVal) ||
+        Boolean(acctVal);
+
+      const isCreditCardPayment =
+        customerRefundMethod === "CREDIT_CARD" ||
+        (!isCustomerAccountProvided && (
+          String(order.paymentInstrument || "").toUpperCase() === "CREDIT_CARD" ||
+          String(order.paymentMethod || "").toLowerCase().includes("credit") ||
+          String(order.paymentDetails?.cardType || "").toLowerCase() === "credit"
+        ));
+
+      if (isCustomerAccountProvided) {
+        finalRefundTxnId = finalRefundTxnId || order.refundTxnId || (upiVal ? `UPI-REF-${Date.now()}` : `BANK-REF-${Date.now()}`);
+        order.refundTxnId = finalRefundTxnId;
+        if (order.returnRequest) order.returnRequest.refundTxnId = finalRefundTxnId;
+        const destDesc = upiVal ? `Customer UPI (${upiVal})` : `Customer Bank (${bankVal} A/C: ${acctVal})`;
+
+        order.refundDetails = {
+          ...(order.refundDetails || {}),
+          refundTxnId: finalRefundTxnId,
+          amount: refundAmt,
+          status: "Completed",
+          refundMethod: upiVal ? `Customer UPI Transfer (${upiVal})` : `Customer Bank Transfer (${bankVal})`,
+          refundedAt: new Date()
+        };
+        title = "Refund Completed to Customer Account";
+        description = description || `₹${refundAmt} refund successfully credited to ${destDesc}. (Ref: ${finalRefundTxnId})`;
+      } else if (isCreditCardPayment) {
+        if (order.paymentStatus !== "refunded" && refundAmt > 0 && (!finalRefundTxnId || String(finalRefundTxnId).startsWith("TEMP"))) {
+          try {
+            const rzpRefundRes = await processRazorpayRefund({
+              order,
+              amount: refundAmt,
+              notes: { orderId: order.orderId, action: "refund_completed_credit_card" },
+              reverseSplit: true
+            });
+            if (rzpRefundRes?.success && rzpRefundRes.refundId) {
+              finalRefundTxnId = rzpRefundRes.refundId;
+            }
+          } catch (rzpErr) {
+            console.warn("Credit Card Razorpay refund warning:", rzpErr.message);
+          }
+        }
+        finalRefundTxnId = finalRefundTxnId || `RFND-${Date.now()}`;
+        order.refundTxnId = finalRefundTxnId;
+        if (order.returnRequest) order.returnRequest.refundTxnId = finalRefundTxnId;
+        order.refundDetails = {
+          ...(order.refundDetails || {}),
+          refundTxnId: finalRefundTxnId,
+          amount: refundAmt,
+          status: "Completed",
+          refundMethod: "Credit Card Auto-Refund (Razorpay)",
+          refundedAt: new Date()
+        };
+        title = "Refund Completed to Credit Card";
+        description = description || `₹${refundAmt} refunded directly to customer's Credit Card via Razorpay. (TXN: ${finalRefundTxnId})`;
+      } else {
+        if ((!finalRefundTxnId || finalRefundTxnId.startsWith("TEMP")) && order.paymentStatus !== "refunded" && refundAmt > 0) {
+          try {
+            const rzpRefundRes = await processRazorpayRefund({
+              order,
+              amount: refundAmt,
+              notes: { orderId: order.orderId, action: "refund_completed" },
+              reverseSplit: true
+            });
+            if (rzpRefundRes?.success && rzpRefundRes.refundId) {
+              finalRefundTxnId = rzpRefundRes.refundId;
+            }
+          } catch (rzpErr) {
+            console.warn("Automated Razorpay refund warning:", rzpErr.message);
+          }
+        }
+        finalRefundTxnId = finalRefundTxnId || `RFND-${Date.now()}`;
+        order.refundTxnId = finalRefundTxnId;
+        if (order.returnRequest) order.returnRequest.refundTxnId = finalRefundTxnId;
+        order.refundDetails = {
+          ...(order.refundDetails || {}),
+          refundTxnId: finalRefundTxnId,
+          amount: refundAmt,
+          status: "Completed",
+          refundMethod: "Razorpay Auto-Refund (Route Split Reversal)",
+          refundedAt: new Date()
+        };
+        title = "Refund Processed & Completed";
+      }
       title = "Refund Processed & Completed";
       description = description || `Refund of ₹${refundAmt} successfully processed. Reference TXN: ${finalRefundTxnId}.`;
 

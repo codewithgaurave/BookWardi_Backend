@@ -1915,28 +1915,19 @@ export const handleSellerCancellationRefund = async (req, res) => {
     }
 
     if (action === "razorpay_auto_refund") {
-      const paymentId = order.razorpayPaymentId || order.paymentDetails?.razorpay_payment_id || order.paymentId;
-      if (!paymentId) {
-        return res.status(400).json({
-          success: false,
-          message: "No Razorpay payment ID found on this order. Please use direct settlement or forward to Admin."
-        });
-      }
+      const customerRefundMethod = String(
+        order.refundDetails?.method ||
+        order.returnRequest?.refundDetails?.method ||
+        ""
+      ).toUpperCase();
+      const upiVal = order.refundDetails?.upiId || order.returnRequest?.refundDetails?.upiId;
+      const acctVal = order.refundDetails?.accountNumber || order.returnRequest?.refundDetails?.accountNumber;
+      const bankVal = order.refundDetails?.bankName || order.returnRequest?.refundDetails?.bankName || "Bank";
+      const isCustomerAccountProvided = customerRefundMethod === "UPI" || customerRefundMethod === "BANK" || Boolean(upiVal) || Boolean(acctVal);
 
-      const rzpRes = await processRazorpayRefund({
-        order,
-        paymentId,
-        amount: refundAmount,
-        notes: {
-          orderId: order.orderId,
-          sellerName: sellerInfo.storeName || "Seller",
-          reason: order.cancellationReason || "Pre-delivery customer cancellation"
-        },
-        reverseSplit: true
-      });
-
-      if (rzpRes && rzpRes.success) {
-        const finalTxnId = rzpRes.refundId || rzpRes.id || `RZP-${Date.now()}`;
+      if (isCustomerAccountProvided) {
+        // Customer provided their own UPI or Bank Account: record direct customer payout
+        const finalTxnId = req.body.refundTxnId || req.body.txnId || (upiVal ? `UPI-REF-${Date.now()}` : `BANK-REF-${Date.now()}`);
         order.refundStatus = "Completed";
         order.settlementStatus = "refunded";
         order.refundTxnId = finalTxnId;
@@ -1945,55 +1936,93 @@ export const handleSellerCancellationRefund = async (req, res) => {
           refundTxnId: finalTxnId,
           amount: refundAmount,
           status: "Completed",
-          refundMethod: "Razorpay Auto-Refund",
+          refundMethod: upiVal ? `Customer UPI Transfer (${upiVal})` : `Customer Bank Transfer (${bankVal})`,
           refundedAt: new Date(),
           refundedBy: sellerInfo.storeName || "Seller"
         };
-
-        if (!order.sellerCreditNoteNo || !/^[A-Z0-9]{2,}CN\d+$/i.test(order.sellerCreditNoteNo)) {
-          try {
-            const cnRes = await resolveNextCreditNote(order, Order);
-            order.sellerCreditNoteNo = cnRes.creditNoteNo;
-            order.creditNoteNumber = cnRes.creditNoteNo;
-            order.sellerCreditNoteSequence = cnRes.creditNoteSequence;
-            order.creditNoteIssuedAt = order.creditNoteIssuedAt || new Date();
-          } catch (cnErr) {
-            console.warn("⚠️ [BACKEND] Failed to resolve credit note on rzp refund:", cnErr.message);
-          }
-        }
-        await order.save();
-
-        try {
-          const custPhone = order.customer?.phone || order.shippingAddress?.phone || order.phone;
-          const cleanCustPhone = String(custPhone || "").replace(/\D/g, "").slice(-10);
-          if (cleanCustPhone.length === 10) {
-            sendFast2SmsRefundProcessed(cleanCustPhone, refundAmount, order.orderId, finalTxnId).catch(() => {});
-          }
-        } catch (smsErr) {}
-
-        invalidateSellerOrdersCache();
-        invalidateOrdersCache();
-
-        broadcastRealtimeEvent({
-          type: "ORDER_UPDATED",
-          orderId: order.orderId,
-          masterOrderId: order.masterOrderId,
-          sellerId: order.sellerId,
-          status: "Cancelled",
-          refundStatus: "Completed"
-        });
-
-        return res.json({
-          success: true,
-          message: `Razorpay refund of ₹${refundAmount} processed successfully (TXN: ${finalTxnId}).`,
-          order: formatSellerSingleOrder(order, scope) || order
-        });
       } else {
-        return res.status(400).json({
-          success: false,
-          message: rzpRes?.message || "Failed to process Razorpay refund."
+        const paymentId = order.razorpayPaymentId || order.paymentDetails?.razorpay_payment_id || order.paymentId;
+        if (!paymentId) {
+          return res.status(400).json({
+            success: false,
+            message: "No Razorpay payment ID found on this order. Please use direct settlement or forward to Admin."
+          });
+        }
+
+        const rzpRes = await processRazorpayRefund({
+          order,
+          paymentId,
+          amount: refundAmount,
+          notes: {
+            orderId: order.orderId,
+            sellerName: sellerInfo.storeName || "Seller",
+            reason: order.cancellationReason || "Pre-delivery customer cancellation"
+          },
+          reverseSplit: true
         });
+
+        if (rzpRes && rzpRes.success) {
+          const finalTxnId = rzpRes.refundId || rzpRes.id || `RZP-${Date.now()}`;
+          order.refundStatus = "Completed";
+          order.settlementStatus = "refunded";
+          order.refundTxnId = finalTxnId;
+          order.refundDetails = {
+            ...(order.refundDetails || {}),
+            refundTxnId: finalTxnId,
+            amount: refundAmount,
+            status: "Completed",
+            refundMethod: "Razorpay Auto-Refund",
+            refundedAt: new Date(),
+            refundedBy: sellerInfo.storeName || "Seller"
+          };
+        } else {
+          return res.status(400).json({
+            success: false,
+            message: rzpRes?.message || "Failed to process Razorpay refund."
+          });
+        }
       }
+
+      if (!order.sellerCreditNoteNo || !/^[A-Z0-9]{2,}CN\d+$/i.test(order.sellerCreditNoteNo)) {
+        try {
+          const cnRes = await resolveNextCreditNote(order, Order);
+          order.sellerCreditNoteNo = cnRes.creditNoteNo;
+          order.creditNoteNumber = cnRes.creditNoteNo;
+          order.sellerCreditNoteSequence = cnRes.creditNoteSequence;
+          order.creditNoteIssuedAt = order.creditNoteIssuedAt || new Date();
+        } catch (cnErr) {
+          console.warn("⚠️ [BACKEND] Failed to resolve credit note on rzp refund:", cnErr.message);
+        }
+      }
+      await order.save();
+
+      const finalTxnId = order.refundTxnId;
+
+      try {
+        const custPhone = order.customer?.phone || order.shippingAddress?.phone || order.phone;
+        const cleanCustPhone = String(custPhone || "").replace(/\D/g, "").slice(-10);
+        if (cleanCustPhone.length === 10) {
+          sendFast2SmsRefundProcessed(cleanCustPhone, refundAmount, order.orderId, finalTxnId).catch(() => {});
+        }
+      } catch (smsErr) {}
+
+      invalidateSellerOrdersCache();
+      invalidateOrdersCache();
+
+      broadcastRealtimeEvent({
+        type: "ORDER_UPDATED",
+        orderId: order.orderId,
+        masterOrderId: order.masterOrderId,
+        sellerId: order.sellerId,
+        status: "Cancelled",
+        refundStatus: "Completed"
+      });
+
+      return res.json({
+        success: true,
+        message: `Refund of ₹${refundAmount} processed successfully (TXN: ${finalTxnId}).`,
+        order: formatSellerSingleOrder(order, scope) || order
+      });
     }
 
     return res.status(400).json({ success: false, message: "Invalid action." });
